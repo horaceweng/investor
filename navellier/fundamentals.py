@@ -14,6 +14,17 @@ Bug fixes vs. the original draft:
 - fundamental/quantitative blend weight corrected to the publicly-documented 30% fundamental
   / 70% quantitative (previous draft had it inverted, 70/30).
 
+Earnings momentum ("earn_accel"), per the book: "we measure the rate of change over four quarters; we look for
+positive earnings changes that grow progressively larger over consecutive quarters". Implemented on the earnings
+*growth rate*: 1st derivative = QoQ growth rate g = EPS_t / EPS_{t-1} - 1; 2nd derivative = rate of change of that
+growth rate = (g_latest - g_previous) / g_previous (a percentage; e.g. +347% -> +91% is -74%). The score is the number of consecutive latest quarters in which g is
+positive and higher than the previous quarter's g (0-3), tie-broken by the 2nd derivative. It needs 5 consecutive
+quarters without gaps. (History of this factor: an intermediate version applied the "rate of change" to the absolute
+EPS *increase* instead of the growth rate -- that was a misreading and has been removed. The original single-step
+version had the right derivative but no consecutiveness and skipped loss-making companies.)
+Loss handling: if the latest quarter's EPS / free cash flow is <= 0 the YoY factor gets the worst score; a swing
+from loss to profit gets the best score; only genuinely missing data is skipped.
+
 Later changes (dashboard integration):
 - module-level fund/notes globals removed (compute() is re-run inside a long-lived server).
 - hard-coded EXCLUDE removed: a ticker with fewer than MIN_FACTORS computable factors is graded
@@ -41,10 +52,11 @@ warnings.filterwarnings("ignore")
 TICKERS = ["NVDA", "TSM", "AMD", "AVGO", "GOOG", "MSFT", "AAPL", "MU", "SNDK",
            "COST", "BRK-B", "TSLA", "SPCX"]
 CACHE_FILE = Path(__file__).resolve().parent.parent / "data_navellier" / "fund_cache.json"
+CACHE_VERSION = 4            # 因子定義改變時 +1, 舊快取視為過期並重抓
 CACHE_TTL = 3 * 24 * 3600   # 財報一季才更新一次, 單檔結果快取 3 天; 也讓被限流中斷後可接續
-MIN_FACTORS = 3     # 可計算因子少於此數者不評級 (N/A)
+MIN_FACTORS = 5     # 可計算因子少於此數者不評級 (N/A)
 
-FACTORS = ["sales_yoy", "margin_exp_yoy_pp", "earn_yoy", "earn_momentum_pp",
+FACTORS = ["sales_yoy", "margin_exp_yoy_pp", "earn_yoy", "earn_accel",
            "surprise_avg", "fcf_yoy", "roe_ttm"]
 
 FUND_WEIGHT, QUANT_WEIGHT = 0.30, 0.70  # per Navellier's disclosed 30/70 blend
@@ -92,60 +104,130 @@ def growth(s, k=1, guard_positive_base=False):
     return float(a / b - 1)
 
 
+def earn_accel(series):
+    """盈餘動能 = 盈餘成長率的變化率 (二階導數)。
+    一階導數 = 盈餘成長率 g = 本季 EPS / 上季 EPS - 1 (季增率, 基期需為正);
+    二階導數 = 成長率的變化率 = (g_最新季 - g_前一季) / g_前一季  (百分比; 前一季成長率需 > 0 才有意義)。
+      例: 前一季 +347%、最新季 +91% -> (91% - 347%) / 347% = -74%。
+    streak = 從最新一季往回, 連續幾季『成長率為正, 且比前一季更高』(0~3) -- 即書上的「連續幾季逐漸加大的盈餘正向變化」。
+    需連續 5 季都有資料。排名: 先比 streak, 同分再比二階導數;
+    最新季虧損 = 最差; 由虧轉盈 = 最佳; 前一季成長率 <= 0 而本季回升為正(『反彈』, 比值的正負號會反, 不算百分比) = 排在所有成長率減速者之前, 彼此依最新季成長率排序。"""
+    out = {"earn_accel": np.nan, "earn_accel_streak": np.nan, "earn_accel_pct": np.nan, "earn_growth_pct": None,
+           "earn_accel_case": None}
+    if series is None or len(series) < 5:
+        return out
+    x = series.iloc[-5:].astype(float)
+    if x.isna().any():
+        return out
+    e = x.values
+    g = [(e[i] / e[i - 1] - 1) if e[i - 1] > 0 else np.nan for i in range(1, 5)]   # 4 個季增率 g[0..3], g[3]=最新
+    streak, k = 0, 3
+    while k >= 1 and np.isfinite(g[k]) and np.isfinite(g[k - 1]) and g[k] > g[k - 1] > 0:
+        streak += 1
+        k -= 1
+    gn, gp = g[3], g[2]
+    pct, case = np.nan, None
+    if e[4] <= 0:
+        tie, case = -1.0, "loss"                     # 最新季虧損
+    elif np.isfinite(gn) and np.isfinite(gp) and gp > 0:
+        pct = gn / gp - 1                            # 二階導數: 成長率的變化率
+        tie = float(np.tanh(pct))                    # tanh 只用來壓進 (-1, 1), 同分排序用
+    elif np.isfinite(gn) and np.isfinite(gp):        # 前一季成長率 <= 0 (EPS 較再前一季下滑): 比值的正負號會反, 不能算百分比
+        if gn > 0:
+            tie, case = float(np.tanh(gn)), "rebound"   # 本季回升為正成長: 優於一切成長率減速者; 彼此再依最新季成長率排序
+        else:
+            tie, case = (0.0 if gn > gp else -1.0), "declining"   # 兩季都在衰退 (衰退趨緩=中性, 惡化=最差)
+    else:
+        tie, case = 1.0, "turnaround"                # 前期 EPS <= 0, 成長率無法計算, 本季已轉為正 = 最佳
+    out.update(earn_accel_streak=streak, earn_accel_pct=pct * 100 if np.isfinite(pct) else np.nan,
+               earn_accel=streak + 0.5 * tie, earn_accel_case=case,
+               earn_growth_pct=[None if not np.isfinite(v) else round(float(v) * 100, 1) for v in g])
+    return out
+
+
+def yoy_state(series):
+    """回傳 (年增率, 狀態)。狀態: 'loss'=最新季<=0, 'turnaround'=4 季前<=0 且最新季>0, 'ok', None=缺資料。"""
+    if series is None or len(series) < 5:
+        return np.nan, None
+    last, prior = series.iloc[-1], series.iloc[-5]
+    if pd.isna(last) or pd.isna(prior):
+        return np.nan, None
+    if last <= 0:
+        return np.nan, "loss"
+    if prior <= 0:
+        return np.nan, "turnaround"
+    return float(last / prior - 1), "ok"
+
+
+def _trim(x):
+    """去掉尾端(最新)的空值, 讓『最新』對齊到最近一個有資料的季度。
+    Yahoo 對剛公布的最新一季常只有 EPS, 營收/營業利益/淨利是空的; 若把空值當最新一欄, 營收年增、利益率、ROE 全部算不出來。
+    只剪尾端, 中間的缺口保留, 所以 [-1] vs [-5] 的位置關係仍然是真正的相隔 4 季。"""
+    s = pd.Series(x, dtype=float)
+    while len(s) and pd.isna(s.iloc[-1]):
+        s = s.iloc[:-1]
+    return s
+
+
+def _derive(r):
+    """由快取中的『原始季度序列』(_rev/_opinc/_eps/_ni/_fcf/_eq, 舊→新) 算出所有財報因子; 純計算, 不連網。
+    公式或資料處理改版時只要改這裡, 不必重抓。"""
+    rev = _trim(r.get("_rev") or [])
+    if len(rev):
+        r["sales_qoq"], r["sales_yoy"] = growth(rev, 1), growth(rev, 4)
+        r["n_q"] = int(rev.notna().sum())
+    if r.get("_rev") and r.get("_opinc"):
+        margin = _trim(pd.Series(r["_opinc"], dtype=float) / pd.Series(r["_rev"], dtype=float))
+        if len(margin):
+            r["op_margin"] = float(margin.iloc[-1]) * 100
+            r["margin_exp_yoy_pp"] = (float((margin.iloc[-1] - margin.iloc[-5]) * 100)
+                                      if len(margin) >= 5 and pd.notna(margin.iloc[-5]) else np.nan)
+    eps, ni = _trim(r.get("_eps") or []), _trim(r.get("_ni") or [])
+    base = eps if eps.notna().sum() >= 5 else ni                 # EPS 資料太少時退而用淨利
+    if len(base):
+        r["earn_yoy"], r["earn_state"] = yoy_state(base)
+        r.update(earn_accel(base))
+        r["_base"] = [None if pd.isna(v) else float(v) for v in base.iloc[-6:]]
+    fcf = _trim(r.get("_fcf") or [])
+    if len(fcf):
+        r["fcf_yoy"], r["fcf_state"] = yoy_state(fcf)
+    eq = _trim(r.get("_eq") or [])
+    if len(ni) >= 4 and len(eq) >= 2:
+        last4, last2 = ni.iloc[-4:], eq.iloc[-2:]
+        if last4.notna().all() and last2.notna().all() and last2.mean() != 0:
+            r["roe_ttm"] = float(last4.sum() / last2.mean() * 100)
+    return r
+
+
 def _compute_ticker(t, notes):
+    """抓原始季度序列(存進快取)與財報驚喜, 再交給 _derive 算因子。"""
     qi, qc, qb = get(t, "quarterly_income_stmt"), get(t, "quarterly_cashflow"), get(t, "quarterly_balance_sheet")
     r = {}
-    if qi is not None:
-        rev = row(qi, "Total Revenue")
-        opinc = row(qi, "Operating Income")
-        netinc = row(qi, "Net Income", "Net Income Common Stockholders")
-        eps = row(qi, "Diluted EPS")
-        if rev is not None:
-            r["sales_qoq"] = growth(rev, 1)
-            r["sales_yoy"] = growth(rev, 4)
-            r["n_q"] = int(rev.dropna().shape[0])
-        if opinc is not None and rev is not None:
-            margin = opinc / rev  # keep NaNs in place, do not dropna before positional offset
-            last = margin.iloc[-1]
-            r["op_margin"] = float(last) * 100 if pd.notna(last) else np.nan
-            if len(margin) >= 5 and pd.notna(margin.iloc[-1]) and pd.notna(margin.iloc[-5]):
-                r["margin_exp_yoy_pp"] = float((margin.iloc[-1] - margin.iloc[-5]) * 100)
-            else:
-                r["margin_exp_yoy_pp"] = np.nan
-        base = eps if eps is not None and eps.dropna().shape[0] >= 5 else netinc
-        if base is not None:
-            # YoY growth only meaningful when the base quarter was profitable (avoid sign flip)
-            r["earn_yoy"] = growth(base, 4, guard_positive_base=True)
-            # momentum = QoQ acceleration: g(latest QoQ) - g(previous QoQ), both guarded positive-base
-            g_now = growth(base, 1, guard_positive_base=True)
-            g_prev = growth(base.iloc[:-1], 1, guard_positive_base=True) if len(base) >= 3 else np.nan
-            r["earn_momentum_pp"] = float((g_now - g_prev) * 100) if pd.notna(g_now) and pd.notna(g_prev) else np.nan
-    if qc is not None:
-        fcf = row(qc, "Free Cash Flow", "Operating Cash Flow")
-        if fcf is not None:
-            r["fcf_yoy"] = growth(fcf, 4, guard_positive_base=True)
-    if qi is not None and qb is not None:
-        netinc = row(qi, "Net Income", "Net Income Common Stockholders")
-        eq = row(qb, "Total Stockholder Equity", "Stockholders Equity", "Total Equity Gross Minority Interest")
-        if netinc is not None and eq is not None:
-            last4 = netinc.iloc[-4:] if len(netinc) >= 4 else None
-            last2eq = eq.iloc[-2:] if len(eq) >= 2 else None
-            ni_ttm = float(last4.sum()) if last4 is not None and last4.notna().all() else np.nan
-            eq_avg = float(last2eq.mean()) if last2eq is not None and last2eq.notna().all() else np.nan
-            r["roe_ttm"] = float(ni_ttm / eq_avg * 100) if (pd.notna(ni_ttm) and eq_avg not in (0, None) and pd.notna(eq_avg)) else np.nan
+
+    def raw(df, key, *names):
+        sr = row(df, *names) if df is not None else None
+        if sr is not None:
+            r[key] = [None if pd.isna(v) else float(v) for v in sr.iloc[-6:]]
+
+    raw(qi, "_rev", "Total Revenue")
+    raw(qi, "_opinc", "Operating Income")
+    raw(qi, "_eps", "Diluted EPS")
+    raw(qi, "_ni", "Net Income", "Net Income Common Stockholders")
+    raw(qc, "_fcf", "Free Cash Flow", "Operating Cash Flow")
+    raw(qb, "_eq", "Total Stockholder Equity", "Stockholders Equity", "Total Equity Gross Minority Interest")
     try:
         ed = retry(lambda: yf.Ticker(t).get_earnings_dates(limit=8))
         if ed is not None and "Surprise(%)" in ed.columns:
-            s = pd.to_numeric(ed["Surprise(%)"], errors="coerce").dropna()
-            if len(s):
-                r["surprise_avg"] = float(s.mean())
-                r["beat_rate"] = float((s > 0).mean() * 100)
-                r["n_surprises"] = int(len(s))
+            sv = pd.to_numeric(ed["Surprise(%)"], errors="coerce").dropna()
+            if len(sv):
+                r["surprise_avg"] = float(sv.mean())
+                r["beat_rate"] = float((sv > 0).mean() * 100)
+                r["n_surprises"] = int(len(sv))
     except YFRateLimitError:
         raise
     except Exception as e:
         notes[t] = f"surprises unavailable: {e}"
-    return r
+    return _derive(r)
 
 
 def _load_cache():
@@ -168,8 +250,8 @@ def _fetch_all(tickers, notes):
     todo = []
     for t in tickers:
         c = cache.get(t)
-        if c and now - c["ts"] < CACHE_TTL:
-            fund[t] = c["data"]
+        if c and c.get("v") == CACHE_VERSION and now - c["ts"] < CACHE_TTL:
+            fund[t] = _derive(dict(c["data"]))
             if c.get("note"):
                 notes[t] = c["note"]
         else:
@@ -190,7 +272,7 @@ def _fetch_all(tickers, notes):
             return
         with lock:
             fund[t] = r
-            cache[t] = {"ts": time.time(), "data": r, "note": n.get(t)}
+            cache[t] = {"v": CACHE_VERSION, "ts": time.time(), "data": r, "note": n.get(t)}
             if n.get(t):
                 notes[t] = n[t]
             done[0] += 1
@@ -206,6 +288,24 @@ def _fetch_all(tickers, notes):
     return fund
 
 
+def _fv(r, f):
+    """排名用數值。虧損 -> 最差; 由虧轉盈 -> 最佳; 真正缺資料 -> None(略過)。"""
+    st = r.get("earn_state") if f == "earn_yoy" else r.get("fcf_state") if f == "fcf_yoy" else None
+    if st == "loss":
+        return -1e9
+    if st == "turnaround":
+        return 1e9
+    v = r.get(f)
+    return v if _ok(v) else None
+
+
+def _quintiles(vals):
+    """vals: [(ticker, value)] -> {ticker: 1..5}。平手取平均名次, 避免同值因排序先後被分到不同等級。"""
+    sr = pd.Series({t: v for t, v in vals}, dtype=float)
+    q = ((sr.rank(method="average") - 1) / len(sr) * 5).astype(int).clip(upper=4) + 1
+    return q.to_dict()
+
+
 def compute(ab_results=None, tickers=None):
     """ab_results: dict from alpha_beta.compute()[0], keyed by ticker with 'nav_score' / 'eligible'.
     If given, blends fundamentals (30%) with the quantitative reward/risk score (70%)."""
@@ -215,16 +315,14 @@ def compute(ab_results=None, tickers=None):
     require_enough(sum(1 for t in tickers if fund[t].get("n_q")), len(tickers),
                    "Navellier 基本面", "既有報告", min_ratio=0.5)
 
-    n_factors = {t: sum(1 for f in FACTORS if _ok(fund[t].get(f))) for t in tickers}
+    n_factors = {t: sum(1 for f in FACTORS if _fv(fund[t], f) is not None) for t in tickers}
     scored_tickers = [t for t in tickers if n_factors[t] >= MIN_FACTORS]
     scores = {}
     for f in FACTORS:
-        vals = [(t, fund[t].get(f)) for t in scored_tickers if _ok(fund[t].get(f))]
-        vals.sort(key=lambda x: x[1])
-        n = len(vals)
-        for i, (t, v) in enumerate(vals):
-            q = min(int(i * 5 / max(n, 1)), 4)
-            scores.setdefault(t, {})[f] = q + 1  # 1..5, higher=better
+        vals = [(t, _fv(fund[t], f)) for t in scored_tickers if _fv(fund[t], f) is not None]
+        if vals:
+            for t, q in _quintiles(vals).items():
+                scores.setdefault(t, {})[f] = q       # 1..5, higher=better
 
     fund_grade = {}
     for t in tickers:

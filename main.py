@@ -107,16 +107,46 @@ def do_nav(cached, uni=None):
                      "動能": short, "動能_tip": cool, "量化分位%": c["nav_pct"] * 100 if c.get("nav_pct") is not None else None, "近期分數": hist, "近期分數_tip": hist})
     df = pd.DataFrame(rows).sort_values("綜合分", ascending=False, na_position="last").reset_index(drop=True)
     frows = []
+    QKEY = {"earn_accel_streak": "earn_accel", "earn_accel_pct": "earn_accel"}   # 顯示欄位 -> 排名用因子
+    STATE = {"earn_yoy": "earn_state", "fcf_yoy": "fcf_state"}                         # 虧損/轉盈狀態欄位
+    ACCEL = ("earn_accel_streak", "earn_accel_pct")
     for t in r["tickers"]:
-        row = {"代號": t}
+        row, fd = {"代號": t}, r["fundamentals"][t]
+        gr = fd.get("earn_growth_pct")
+        gtxt = "近 4 季 EPS 季增率: " + "、".join("—" if v is None else f"{v:+.0f}%" for v in gr) + "；" if gr else ""
         for key, _ in FACTOR_LABELS:
-            v = r["fundamentals"][t].get(key)
-            if v is None or v != v:
+            q = r["factor_quintiles"].get(t, {}).get(QKEY.get(key, key))
+            tip = f"分位 {q}/5" if q else ""
+            st = fd.get(STATE.get(key, ""))
+            v = fd.get(key)
+            missing = v is None or v != v
+            if key in ACCEL:
+                st = "loss" if fd.get("earn_state") == "loss" else None
+                case = fd.get("earn_accel_case")
+                if key == "earn_accel_pct" and case in ("turnaround", "rebound", "declining"):
+                    gp, gn = (gr[2], gr[3]) if gr else (None, None)
+                    why = {"turnaround": ("轉盈", "前期 EPS 為負或零，成長率無法計算，本季已轉為正，視為最佳"),
+                           "rebound": ("反彈", f"前一季成長率為負({gp:+.0f}%，EPS 較再前一季下滑)，最新季回升到 {gn:+.0f}%；"
+                                              "前一季為負時，變化率的正負號會反、無法用百分比表示，視為最佳" if gp is not None and gn is not None else ""),
+                           "declining": ("衰退中", f"前一季 {gp:+.0f}%、最新季 {gn:+.0f}%，EPS 連續兩季下滑" if gp is not None and gn is not None else "")}[case]
+                    row[key + "_txt"], row[key + "_tip"] = why[0], gtxt + why[1] + "；" + tip
+                    continue
+            if st in ("loss", "turnaround"):
+                row[key + "_txt"] = "虧損" if st == "loss" else "轉盈"
+                row[key + "_tip"] = ("最新季虧損，視為最差；" if st == "loss" else "由虧轉盈，視為最佳；") + tip
+                continue
+            if missing:
                 continue
             row[key] = v * 100 if key in ("sales_yoy", "earn_yoy", "fcf_yoy") else v   # 成長率為小數, 轉成 %
-            q = r["factor_quintiles"].get(t, {}).get(key)
-            if q:
-                row[key + "_tip"] = f"分位 {q}/5"
+            if key == "earn_accel_streak":
+                tip = f"連續 {int(v)} 季「盈餘成長率為正，且比前一季更高」；" + gtxt + tip
+            elif key == "earn_accel_pct":
+                gp, gn = (gr[2], gr[3]) if gr else (None, None)
+                chg = (f"成長率由 {gp:+.0f}% 變為 {gn:+.0f}%，變化率 = ({gn:.0f}% − {gp:.0f}%) ÷ {gp:.0f}% = {v:+.0f}%；"
+                       if gp is not None and gn is not None and gp > 0 else "")
+                tip = chg + gtxt + tip
+            if tip:
+                row[key + "_tip"] = tip
         frows.append(row)
     state.setdefault("nav", {})[mode] = {"rows": df, "factors": pd.DataFrame(frows), "asof": r["asof"],
                                          "missing": r["missing"], "tickers": r["tickers"], "ts": now()}

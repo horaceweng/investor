@@ -82,6 +82,11 @@ def table(df, cols, perf, with_perf=True, tail=(), compact=False):
     for i, r in enumerate(df.to_dict("records"), 1):
         tds = f'<td class="n rk" data-v="{i}">{i}</td>'
         for c, _, k in cols:
+            txt = r.get(c + "_txt")
+            if txt and not (isinstance(r.get(c), (int, float)) and r.get(c) == r.get(c)):    # 虧損/轉盈: 顯示文字而非「—」
+                tds += (f'<td class="n" data-v="{-1e18 if txt == "虧損" else 1e18}" title="{esc(r.get(c + "_tip", ""))}">'
+                        f'<b>{esc(txt)}</b></td>')
+                continue
             if k == "star":
                 on = bool(r.get(c))
                 tds += (f'<td class="star{" on" if on else ""}" data-tk="{esc(r.get("代號"))}" data-v="{1 if on else 0}" '
@@ -103,7 +108,7 @@ def table(df, cols, perf, with_perf=True, tail=(), compact=False):
 
 # ───────────────────────── 分頁內容 ─────────────────────────
 FACTOR_LABELS = [("sales_yoy", "營收年增%"), ("margin_exp_yoy_pp", "營業利益率年增(pp)"), ("earn_yoy", "EPS年增%"),
-                 ("earn_momentum_pp", "盈餘動能(pp)"), ("surprise_avg", "財報驚喜均值%"),
+                 ("earn_accel_streak", "盈餘動能(連續季數)"), ("earn_accel_pct", "盈餘動能(成長率變化%)"), ("surprise_avg", "財報驚喜均值%"),
                  ("fcf_yoy", "FCF年增%"), ("roe_ttm", "ROE(TTM)%")]
 
 
@@ -238,6 +243,7 @@ def make_tabs(state: dict) -> list:
                ("；清單只有十幾檔時，A 只代表清單裡最強的前 20%。" if mode == "watchlist" else "；換股票池要重新更新。"),
                "資料不足 52 週(如近期上市)、或可計算的基本面因子少於 3 個(如部分外國公司)的股票不評級，以 N/A 顯示。" +
                ("金融業(銀行、保險等)沒有一般的營收/營業利益結構，可計算的因子較少，評級與其他產業的可比性較低。" if mode == "sp500" else ""),
+               "基本面「盈餘動能」(原書：連續幾季逐漸加大的盈餘正向變化)：一階導數 = 盈餘成長率(本季 EPS ÷ 上季 EPS − 1)；二階導數 = 成長率的變化率 = (最新季成長率 − 前一季成長率) ÷ 前一季成長率，例如成長率由 +347% 變為 +91% 是 −74%；連續季數 = 連續幾季「成長率為正且比前一季更高」(0–3)，同分再比二階導數；需連續 5 季資料。滑鼠移到數字上可看近 4 季的成長率。最新一季虧損者，EPS/FCF 年增視為最差，由虧轉盈視為最佳，只有真正缺資料才略過；可計算因子少於 5 個不評級。",
                "與原書的差異：沒有「剔除軋空造成的 Alpha」(需空單資料，書中未公開細節)；基本面 8 個因子缺「分析師預估修正」(需付費資料)，只用其餘 7 個。",
                "動能區間是「水準」規則，是我們自訂的，書中沒有給數字門檻：量化分數的分位低於警示門檻 → 🔻，低於剔除門檻 → ❌(預設 60% / 40%，可在上方調整)。分位是相對於目前的股票池，自訂清單只有十幾檔時很粗略。",
                "為什麼不用「連續下滑幾週」：我們用 S&P 500 近 7 年回測，連降 2 週、3 週的出現頻率和純隨機一模一樣，被標記後的表現也不比平均差，已移除。分數水準較高者之後 13 週超額報酬較高(最高 20% +1.89%、最低 20% −0.30%)，但 2020–2022 年沒有效果，不是穩定規律；且含生存者偏差、未扣成本。「近期 Alpha/SD」欄僅供參考，過去幾週由歷史價格回算。",
