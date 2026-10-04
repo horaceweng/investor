@@ -1,5 +1,6 @@
 """儀表板頁面產生: 股價表現計算 + HTML 渲染 (由 main.py 的伺服器呼叫)。"""
 import html
+import json
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -81,6 +82,11 @@ def table(df, cols, perf, with_perf=True, tail=(), compact=False):
     for i, r in enumerate(df.to_dict("records"), 1):
         tds = f'<td class="n rk" data-v="{i}">{i}</td>'
         for c, _, k in cols:
+            if k == "star":
+                on = bool(r.get(c))
+                tds += (f'<td class="star{" on" if on else ""}" data-tk="{esc(r.get("代號"))}" data-v="{1 if on else 0}" '
+                        f'title="點一下加入/移出自訂觀察清單">{"★" if on else "☆"}</td>')
+                continue
             tip = r.get(c + "_tip") or (r.get("買進者") if c == "買進家數" else None)
             tds += cell(k, r.get(c), f' title="{esc(tip)}"' if tip else "")
         if with_perf:
@@ -177,23 +183,37 @@ def make_tabs(state: dict) -> list:
     n_tk = len((N.get("tickers") or N.get("watchlist") or [])) if N else 0
     editor = ""
     if mode == "watchlist":
-        editor += ('<div class="wl"><label>觀察清單 <input id="wl" type="text" value="%s" spellcheck="false" '
-                   'autocomplete="off"></label><button type="button" id="wlsave">儲存並更新</button>'
-                   '<span id="wlmsg"></span></div>' % esc(", ".join(load_watchlist())))
+        miss = sorted(N["missing"]) if N and N.get("missing") else []
+        miss = sorted(N["missing"]) if N and N.get("missing") else []
+        wl_now = load_watchlist()
+        editor += ('<div class="wlbar" id="wlbar"><span>自訂觀察清單：<b>%d</b> 檔</span>'
+                   '<button type="button" id="wledit">編輯清單</button></div>' % len(wl_now))
+        editor += ('<div class="wled" id="wled" hidden data-list="%s" data-missing="%s">'
+                   '<div class="wlhead"><b>編輯自訂觀察清單</b><span id="wlcount"></span><span id="wldirty"></span></div>'
+                   '<div class="chips" id="wlchips"></div>'
+                   '<div class="wladd"><input id="wladd" type="text" spellcheck="false" autocomplete="off" '
+                   'placeholder="輸入代號，可一次貼上多檔（逗號、空白、換行、全形標點都可以），按 Enter 加入">'
+                   '<button type="button" id="wladdbtn">加入</button></div>'
+                   '<div class="wlact"><button type="button" id="wlsave" class="primary">儲存並更新</button>'
+                   '<button type="button" id="wlcancel">取消</button>'
+                   '<button type="button" id="wlreset">還原</button><button type="button" id="wlclear">全部清除</button>'
+                   '<span id="wlmsg"></span></div></div>'
+                   % (esc(json.dumps(wl_now)), esc(json.dumps(miss))))
     else:
         src = "S&amp;P 500 成分股(來源: Wikipedia)" if mode == "sp500" else "Nasdaq 100 成分股(來源: Nasdaq 官方網站)"
-        editor += f'<p class="stamp">目前股票池：{src}；★ 表示也在你的自訂觀察清單中。</p>'
+        editor += (f'<p class="stamp">目前股票池：{src}；點「清單」欄的 ☆/★ 可把該股加入或移出自訂觀察清單'
+                   '（切到「自訂觀察清單」並按「更新評級」後生效）。</p>')
     cl = load_cooling()
     editor += ('<div class="wl"><label>動能區間門檻：量化分數在股票池的分位低於 '
                f'<input id="cw" class="numin" type="number" min="2" max="99" value="{round(cl["warn"] * 100)}">% → 🔻警示；低於 '
                f'<input id="cr" class="numin" type="number" min="1" max="98" value="{round(cl["remove"] * 100)}">% → ❌建議剔除</label>'
-               '<button type="button" id="cbsave">儲存並更新</button><span id="cmsg"></span></div>')
+               '<button type="button" id="cbsave">儲存門檻並更新</button><span id="cmsg"></span></div>')
     ncols = [("代號", "代號", "ticker")]
     if mode in ("ndx", "sp500"):
         ncols += [("公司", "公司", "co")]
         if mode == "sp500":
             ncols += [("板塊", "板塊", "co")]
-        ncols += [("清單", "清單", "text")]
+        ncols += [("清單", "清單", "star")]
     ncols += [("綜合評級", "綜合", "text"), ("綜合分", "綜合分", "num"),
               ("基本面評級", "基本面", "text"), ("量化評級", "量化", "text"),
               ("Alpha/SD", "Alpha/SD", "num"), ("量化分位%", "量化分位", "plain"), ("Beta5Y", "Beta(5Y)", "num"),
@@ -202,7 +222,10 @@ def make_tabs(state: dict) -> list:
     fcols = [("代號", "代號", "ticker")] + [(k, lab, "num") for k, lab in FACTOR_LABELS]
     nbody = ""
     if N:
-        nbody = (table(N["rows"], ncols, perf, tail=ntail) +
+        rows_now = N["rows"].copy()      # ★ 以「現在的」清單為準(切換後重新整理也不會退回舊狀態), 不用更新當下存的值
+        mine = set(load_watchlist())
+        rows_now["清單"] = rows_now["代號"].map(lambda t: "★" if t in mine else "")
+        nbody = (table(rows_now, ncols, perf, tail=ntail) +
                  '<h3>基本面因子明細 <span class="stamp">(滑鼠移到數字上可看該因子在股票池內的五分位 1–5，5 最好)</span></h3>' +
                  table(N["factors"], fcols, perf, with_perf=False, compact=True))
     label = MODES[mode]
@@ -259,6 +282,24 @@ section{display:none}section.on{display:block}
 .card p{margin:4px 0;color:var(--mut)}
 .stamp{font-size:12px;color:var(--mut);margin-top:2px}
 .note{background:var(--note);border:1px solid var(--noteb);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
+.wlbar{display:flex;gap:12px;align-items:center;margin:10px 0;color:var(--mut)}
+.wlbar b{color:var(--fg)}
+.wlbar[hidden],.wled[hidden]{display:none}
+.wled{margin:10px 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.wlhead{display:flex;gap:12px;align-items:baseline;margin-bottom:8px}
+#wlcount{color:var(--mut);font-size:13px}#wldirty{color:var(--acc);font-size:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;min-height:30px}
+.chip{display:inline-flex;align-items:center;gap:2px;padding:3px 4px 3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--card);font-weight:600;font-size:13px}
+.chip.bad{border-color:var(--red);color:var(--red)}
+.chip button{border:0;background:transparent;padding:0 6px;cursor:pointer;color:var(--mut);font-size:15px;line-height:1;border-radius:50%}
+.chip button:hover{color:var(--red)}
+.wladd{display:flex;gap:8px;margin-bottom:10px}
+.wladd input{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit}
+.wlact{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+td.star{cursor:pointer;text-align:center;color:var(--mut);user-select:none;font-size:15px}
+td.star.on{color:#e0a800}td.star:hover{color:var(--acc)}
+#toast{position:fixed;right:16px;bottom:16px;max-width:380px;padding:10px 14px;background:var(--fg);color:var(--bg);border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+#toast.show{opacity:.95}
 .wl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
 .wl label{flex:1;min-width:260px;display:flex;gap:8px;align-items:center;color:var(--mut)}
 .wl input.numin{flex:none;width:64px;margin:0 4px;text-align:right}
@@ -301,7 +342,7 @@ footer{max-width:1760px;margin:0 auto;padding:0 16px 40px;color:var(--mut);font-
 @media(max-width:600px){h1{font-size:19px}}
 """
 
-JS = """
+JS = r"""
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 const ROWS=15;
@@ -361,15 +402,75 @@ if(cbb)cbb.onclick=async()=>{
   const u=await fetch('/api/update?task=nav',{method:'POST',headers:{'X-Requested-With':'dashboard'}});
   if(u.status===409)alert('已有更新在進行中，門檻已儲存，稍後請按「更新評級」');
   clearTimeout(timer);poll()};
-const wlb=$('#wlsave');
-if(wlb)wlb.onclick=async()=>{
-  const msg=$('#wlmsg');msg.textContent='';
-  const r=await fetch('/api/watchlist',{method:'POST',headers:{'X-Requested-With':'dashboard','Content-Type':'application/json'},body:JSON.stringify({text:$('#wl').value})});
-  const j=await r.json();
-  if(!r.ok){msg.textContent=j.error||'儲存失敗';return}
-  const u=await fetch('/api/update?task=nav',{method:'POST',headers:{'X-Requested-With':'dashboard'}});
-  if(u.status===409)alert('已有更新在進行中，清單已儲存，稍後請按「更新評級」');
-  clearTimeout(timer);poll()};
+function toast(m){let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t)}
+  t.textContent=m;t.classList.add('show');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),4500)}
+const JH={'X-Requested-With':'dashboard','Content-Type':'application/json'};
+
+// ── 自訂觀察清單編輯器 (清單沒有檔數上限; 前後端都會驗證代號格式) ──
+const wled=$('#wled');
+if(wled){
+  const saved0=JSON.parse(wled.dataset.list),miss=new Set(JSON.parse(wled.dataset.missing||'[]'));
+  let saved=[...saved0],draft=[...saved0];
+  const RE=/^[A-Z0-9][A-Z0-9-]{0,9}$/;
+  const norm=t=>{t=t.normalize('NFKC').trim().replace(/^\$/,'').toUpperCase().replace(/\./g,'-');return RE.test(t)?t:null};
+  const split=s=>s.normalize('NFKC').split('\n').flatMap(l=>l.split('#')[0].split(/[\s,;、]+/)).filter(Boolean);
+  const dirty=()=>draft.length!==saved.length||draft.some((t,i)=>t!==saved[i]);
+  const msg=(m,err)=>{const e=$('#wlmsg');e.textContent=m||'';e.style.color=err?'var(--red)':'var(--mut)'};
+  function draw(){
+    $('#wlchips').innerHTML=draft.length?draft.map(t=>'<span class="chip'+(miss.has(t)?' bad':'')+'"'+(miss.has(t)?' title="上次更新查不到價格資料"':'')+'>'+t+
+      '<button type="button" data-rm="'+t+'" aria-label="移除 '+t+'">×</button></span>').join(''):'<span class="stamp">清單是空的，請在下方輸入代號</span>';
+    $('#wlcount').textContent=draft.length+' 檔';
+    $('#wldirty').textContent=dirty()?'● 有未儲存的變更':'';
+    $('#wlsave').disabled=!draft.length;
+  }
+  function add(text){
+    const good=[],bad=[],dup=[];
+    for(const tok of split(text)){const t=norm(tok);
+      if(!t)bad.push(tok);else if(draft.includes(t)||good.includes(t))dup.push(t);else good.push(t)}
+    draft.push(...good);draw();
+    const parts=[];
+    if(good.length)parts.push('已加入 '+good.length+' 檔');
+    if(dup.length)parts.push('已在清單中: '+dup.join('、'));
+    if(bad.length)parts.push('無法辨識: '+bad.join('、'));
+    msg(parts.join('；'),bad.length>0);
+  }
+  const inp=$('#wladd');
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();add(inp.value);inp.value=''}});
+  inp.addEventListener('paste',()=>setTimeout(()=>{add(inp.value);inp.value=''},0));
+  $('#wladdbtn').onclick=()=>{add(inp.value);inp.value='';inp.focus()};
+  $('#wlchips').addEventListener('click',e=>{const t=e.target.dataset&&e.target.dataset.rm;if(!t)return;
+    draft=draft.filter(x=>x!==t);draw();msg('')});
+  const openEd=()=>{draft=[...saved];draw();msg('');wled.hidden=false;$('#wlbar').hidden=true;inp.focus()};
+  const closeEd=()=>{wled.hidden=true;$('#wlbar').hidden=false};
+  $('#wledit').onclick=openEd;
+  $('#wlcancel').onclick=()=>{if(dirty()&&!confirm('放棄未儲存的變更?'))return;draft=[...saved];draw();msg('');closeEd()};
+  $('#wlreset').onclick=()=>{draft=[...saved];draw();msg('已還原為上次儲存的清單')};
+  $('#wlclear').onclick=()=>{if(draft.length&&confirm('清除全部 '+draft.length+' 檔?(按「儲存並更新」才會生效)')){draft=[];draw();msg('')}};
+  $('#wlsave').onclick=async()=>{
+    if(inp.value.trim()){add(inp.value);inp.value=''}
+    if(!draft.length){msg('清單不能是空的',true);return}
+    msg('儲存中…');
+    const r=await fetch('/api/watchlist',{method:'POST',headers:JH,body:JSON.stringify({tickers:draft})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){msg(j.error||'儲存失敗',true);return}
+    saved=[...j.tickers];draft=[...saved];draw();msg('');closeEd();   // 儲存後收起編輯器; 進度顯示在頁首
+    const u=await fetch('/api/update?task=nav',{method:'POST',headers:{'X-Requested-With':'dashboard'}});
+    if(u.status===409)alert('已有更新在進行中，清單已儲存，稍後請按「更新評級」');
+    clearTimeout(timer);poll()};
+  window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue=''}});
+  draw();
+}
+
+// ── 大股票池表格: 點「清單」欄的 ☆/★ 加入/移出自訂觀察清單 ──
+document.addEventListener('click',async e=>{
+  const td=e.target.closest&&e.target.closest('td.star');if(!td)return;
+  const t=td.dataset.tk;
+  const r=await fetch('/api/watchlist/toggle',{method:'POST',headers:JH,body:JSON.stringify({ticker:t})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok){toast(j.error||'操作失敗');return}
+  $$('td.star[data-tk="'+t+'"]').forEach(c=>{c.classList.toggle('on',j.member);c.textContent=j.member?'★':'☆';c.dataset.v=j.member?1:0});
+  toast((j.member?'已加入 ':'已移出 ')+t+'，自訂觀察清單現有 '+j.tickers.length+' 檔（切到「自訂觀察清單」並按「更新評級」後生效）');
+});
 poll();
 """
 

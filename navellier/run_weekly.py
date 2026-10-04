@@ -23,6 +23,7 @@ bias (current constituents only), overlapping observations, no costs, no signifi
 import json
 import os
 import re
+import unicodedata
 
 import pandas as pd
 from datetime import date, datetime, timedelta
@@ -47,34 +48,71 @@ TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,9}$")
 
 
 # ───────────── 觀察清單 ─────────────
-def parse_tickers(text):
-    """以逗號/空白/換行分隔, 去 # 註解, 轉大寫, 去重; 格式不合者丟 ValueError。"""
-    out = []
-    for line in text.splitlines():
-        for tok in re.split(r"[,\s]+", line.split("#")[0].strip()):
+_SPLIT = re.compile(r"[\s,;、]+")
+
+
+def normalize_ticker(tok):
+    """全形轉半形、去掉前綴 $、轉大寫、'.' -> '-' (BRK.B -> BRK-B); 不合法回傳 None。"""
+    t = unicodedata.normalize("NFKC", tok).strip().lstrip("$").upper().replace(".", "-")
+    return t if TICKER_RE.match(t) else None
+
+
+def split_tickers(text):
+    """回傳 (有效代號[去重, 保序], 無法辨識的原始字串)。
+    以逗號/分號/頓號/空白/換行分隔 (全形標點也可); '#' 之後為註解。"""
+    good, bad = [], []
+    for line in unicodedata.normalize("NFKC", text).splitlines():
+        for tok in _SPLIT.split(line.split("#")[0].strip()):
             if not tok:
                 continue
-            tok = tok.upper().replace(".", "-")
-            if not TICKER_RE.match(tok):
-                raise ValueError(f"不合法的代號: {tok!r}")
-            if tok not in out:
-                out.append(tok)
-    return out
+            t = normalize_ticker(tok)
+            if t is None:
+                bad.append(tok)
+            elif t not in good:
+                good.append(t)
+    return good, bad
+
+
+def parse_tickers(text):
+    good, bad = split_tickers(text)
+    if bad:
+        raise ValueError("無法辨識的代號: " + "、".join(bad[:8]))
+    return good
 
 
 def load_watchlist():
     if WATCHLIST_FILE.exists():
-        t = parse_tickers(WATCHLIST_FILE.read_text())
+        t, _ = split_tickers(WATCHLIST_FILE.read_text())      # 檔案中有壞掉的行就略過, 不讓整個頁面壞掉
         if t:
             return t
     return list(alpha_beta.TICKERS)
 
 
 def save_watchlist(tickers):
-    if not 1 <= len(tickers) <= 60:
-        raise ValueError("觀察清單需有 1 到 60 檔")
+    if not tickers:
+        raise ValueError("觀察清單不能是空的，至少要有 1 檔")
     DATA_DIR.mkdir(exist_ok=True)
-    WATCHLIST_FILE.write_text("\n".join(tickers) + "\n")
+    tmp = WATCHLIST_FILE.with_suffix(".tmp")
+    tmp.write_text("\n".join(tickers) + "\n")
+    os.replace(tmp, WATCHLIST_FILE)                           # 原子寫入, 更新工作同時讀取也不會讀到半份
+
+
+def toggle_watchlist(ticker):
+    """加入/移出一檔; 回傳 (新清單, 是否在清單中)。"""
+    t = normalize_ticker(ticker)
+    if t is None:
+        raise ValueError(f"無法辨識的代號: {ticker!r}")
+    cur = load_watchlist()
+    if t in cur:
+        if len(cur) == 1:
+            raise ValueError("清單至少要保留 1 檔")
+        cur.remove(t)
+        member = False
+    else:
+        cur.append(t)
+        member = True
+    save_watchlist(cur)
+    return cur, member
 
 
 def load_mode():

@@ -223,12 +223,18 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok() or self.headers.get("X-Requested-With") != "dashboard":
             return self._send(403, "forbidden", "text/plain")
         u = urlparse(self.path)
-        if u.path == "/api/watchlist":
+        if u.path in ("/api/watchlist", "/api/watchlist/toggle"):
             try:
                 n = int(self.headers.get("Content-Length") or 0)
-                if n > 10_000:
+                if n > 500_000:             # 只是防止異常大的請求, 不限制檔數
                     raise ValueError("內容過長")
-                tickers = nav_run.parse_tickers(json.loads(self.rfile.read(n) or b"{}").get("text", ""))
+                body = json.loads(self.rfile.read(n) or b"{}")
+                if u.path == "/api/watchlist/toggle":
+                    tickers, member = nav_run.toggle_watchlist(str(body.get("ticker", "")))
+                    return self._send(200, json.dumps({"tickers": tickers, "member": member}), "application/json")
+                raw = body.get("tickers")
+                text = "\n".join(str(x) for x in raw) if isinstance(raw, list) else str(body.get("text", ""))
+                tickers = nav_run.parse_tickers(text)
                 nav_run.save_watchlist(tickers)
             except (ValueError, json.JSONDecodeError) as e:
                 return self._send(400, json.dumps({"error": str(e)}, ensure_ascii=False), "application/json")
