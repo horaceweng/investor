@@ -385,7 +385,7 @@ function render(s){
   else{msg.className='';msg.textContent=s.finished?'上次更新完成 '+new Date(s.finished*1000).toLocaleString('zh-TW'):''}
 }
 async function poll(){
-  let s;try{s=await (await fetch('/api/status')).json()}catch(e){timer=setTimeout(poll,3000);return}
+  let s;try{const r=await fetch('/api/status');if(r.status===401){location.href='/login';return}s=await r.json()}catch(e){timer=setTimeout(poll,3000);return}
   render(s);
   if(s.running){wasRunning=true;timer=setTimeout(poll,1500)}
   else if(wasRunning){location.reload()}
@@ -481,7 +481,7 @@ poll();
 """
 
 
-def build_page(state: dict) -> str:
+def build_page(state: dict, logout: bool = False) -> str:
     tabs = make_tabs(state)
     dim = ' class="dim" title="自訂觀察清單不適用"'      # f-string 內不能有反斜線, 先算好
     nav = "".join(f'<button type="button" data-t="{t["id"]}"{dim if t.get("na") else ""}>{esc(t["title"])}</button>' for t in tabs)
@@ -512,7 +512,7 @@ def build_page(state: dict) -> str:
 <button type="button" id="cbtn"></button>
 <span class="stamp" style="margin-left:10px" title="下面各分頁顯示的都是這個股票池的結果；自訂觀察清單只作用於 Navellier 評級">選股股票池</span>
 <div class="seg" style="margin:0">{"".join(f'<button type="button" data-mode="{k}" class="{"on" if k == load_mode() else ""}">{esc(v)}</button>' for k, v in MODES.items())}</div>
-<span id="msg"></span></div></header>
+<span id="msg"></span>{'<a class="stamp" href="/logout" style="margin-left:auto">登出</a>' if logout else ""}</div></header>
 <nav>{nav}</nav><main>{"".join(secs)}</main>
 <footer>資料來源: Wikipedia(成分股)、Yahoo Finance via yfinance(價格與基本面)、SEC EDGAR 13F-HR、OpenFIGI(代號對應)。
 1M/3M/6M/1Y 為調整後收盤價(含股利與分割)的漲跌幅。「全部更新」會重新抓取目前所選股票池的所有資料，約需 10 分鐘，Yahoo 限流時可能失敗，失敗時會保留舊資料。

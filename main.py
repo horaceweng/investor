@@ -25,6 +25,7 @@ import portfolio_buys
 import sp500_losers
 import sp500_magic
 import sp500_value
+import auth
 from dashboard_html import FACTOR_LABELS, build_page, performance
 from navellier import run_weekly as nav_run
 
@@ -38,6 +39,8 @@ state = {}                      # 各模組結果
 state_lock = threading.Lock()
 job = {"running": False, "task": "", "label": "", "step": "", "started": 0, "finished": 0, "error": None}
 job_lock = threading.Lock()
+AUTH_PW, EXTRA_HOSTS, TS_USERS, TS_DEVICES = auth.config()   # 密碼 / 額外主機名稱 / 允許的 Tailscale 帳號 / 允許的 Tailscale 裝置 (都沒設 = 只限本機、不需登入)
+THROTTLE = auth.Throttle()
 
 
 def now():
@@ -222,11 +225,35 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _host_ok(self):
-        # 只接受本機網址, 防止 DNS rebinding / 其他網站對 localhost 發請求
-        host = (self.headers.get("Host") or "").split(":")[0]
+        # 只接受本機網址與明確設定過的主機名稱, 防止 DNS rebinding / 其他網站對本機服務發請求
+        allowed = auth.LOOPBACK | EXTRA_HOSTS
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower() if not (self.headers.get("Host") or "").startswith("[") else "::1"
         origin = self.headers.get("Origin")
-        return host in ("127.0.0.1", "localhost") and (
-            origin is None or urlparse(origin).hostname in ("127.0.0.1", "localhost"))
+        if not (host in allowed and (origin is None or (urlparse(origin).hostname or "").lower() in allowed)):
+            return False
+        if host not in auth.LOOPBACK:                   # 經 tailscale serve 進來的請求
+            if TS_USERS and (self.headers.get("Tailscale-User-Login") or "").strip().lower() not in TS_USERS:
+                return False                            # 必須是指定的 Tailscale 帳號
+            if TS_DEVICES:                              # 而且必須是指定的裝置 (由發送者的 Tailscale IP 反查)
+                # 取「最後一段」: 反向代理(tailscaled)會把真實來源 IP 附加在最後; 前面各段是客戶端自己填的, 不可信
+                ip = (self.headers.get("X-Forwarded-For") or "").split(",")[-1].strip()
+                if auth.device_of(ip) not in TS_DEVICES:
+                    return False
+        return True
+
+    def _authed(self):
+        return not AUTH_PW or auth.valid_cookie(self.headers.get("Cookie"), AUTH_PW)
+
+    def _secure(self):
+        return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+
+    def _redirect(self, where, cookie=None):
+        self.send_response(303)
+        self.send_header("Location", where)
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _send(self, code, body, ctype="text/html; charset=utf-8"):
         data = body.encode("utf-8") if isinstance(body, str) else body
@@ -241,18 +268,41 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._send(403, "forbidden", "text/plain")
         path = urlparse(self.path).path
+        if AUTH_PW and path == "/login":
+            return self._redirect("/") if self._authed() else self._send(200, auth.login_page())
+        if AUTH_PW and path == "/logout":
+            return self._redirect("/login", auth.clear_cookie())
+        if not self._authed():
+            if path.startswith("/api/"):
+                return self._send(401, '{"error":"unauthorized"}', "application/json")
+            return self._redirect("/login")
         if path == "/":
             with state_lock:
-                page = build_page(state)
+                page = build_page(state, logout=bool(AUTH_PW))
             return self._send(200, page)
         if path == "/api/status":
             return self._send(200, json.dumps(job), "application/json")
         self._send(404, "not found", "text/plain")
 
     def do_POST(self):
-        if not self._host_ok() or self.headers.get("X-Requested-With") != "dashboard":
+        if not self._host_ok():
             return self._send(403, "forbidden", "text/plain")
         u = urlparse(self.path)
+        if AUTH_PW and u.path == "/login":                       # 表單登入 (沒有 X-Requested-With, 靠 Host/Origin 檢查與 SameSite cookie)
+            wait = THROTTLE.locked_for()
+            if wait:
+                return self._send(429, auth.login_page(f"嘗試次數過多，請 {wait} 秒後再試"))
+            n = min(int(self.headers.get("Content-Length") or 0), 2000)
+            pw = (parse_qs(self.rfile.read(n).decode("utf-8", "replace")).get("password") or [""])[0]
+            if auth.check_password(pw, AUTH_PW):
+                THROTTLE.ok()
+                return self._redirect("/", auth.make_cookie(AUTH_PW, self._secure()))
+            THROTTLE.fail()
+            return self._send(401, auth.login_page("密碼錯誤"))
+        if self.headers.get("X-Requested-With") != "dashboard":
+            return self._send(403, "forbidden", "text/plain")
+        if not self._authed():
+            return self._send(401, '{"error":"unauthorized"}', "application/json")
         if u.path in ("/api/watchlist", "/api/watchlist/toggle"):
             try:
                 n = int(self.headers.get("Content-Length") or 0)
@@ -299,6 +349,7 @@ def main():
     global QUARTER
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--host", default="127.0.0.1", help="綁定位址; 預設只限本機。非本機位址需先設定密碼")
     ap.add_argument("--no-open", action="store_true")
     ap.add_argument("--quarter", default=None, help="13F 季底日期; 省略則自動偵測最新一季")
     args = ap.parse_args()
@@ -309,9 +360,19 @@ def main():
         print("尚無資料, 以快取建立初始資料 (約 1 分鐘)…")
         start_job("init")
 
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    remote = args.host not in auth.LOOPBACK or bool(EXTRA_HOSTS)
+    if remote and not (AUTH_PW or TS_USERS or TS_DEVICES):
+        raise SystemExit("拒絕啟動: 已設定對外綁定位址或額外允許的主機名稱, 但沒有設密碼、也沒有指定 Tailscale 帳號。\n"
+                         "請設定 DASHBOARD_PASSWORD / data/dashboard_password.txt, 或 DASHBOARD_TAILSCALE_USERS / data/tailscale_users.txt。")
+    if args.host not in auth.LOOPBACK and not AUTH_PW:
+        raise SystemExit("拒絕啟動: 綁定在非本機位址時一定要設密碼 (Tailscale 標頭在區網內可被偽造, 只在綁定本機時才可信)。")
+    srv = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"
     print(f"儀表板已啟動: {url}   (Ctrl+C 結束)")
+    if AUTH_PW or TS_USERS:
+        print(f"  遠端存取: 密碼登入={'是' if AUTH_PW else '否'}; 限定 Tailscale 帳號={len(TS_USERS)} 個; 限定裝置={sorted(TS_DEVICES) or '不限'}; 額外允許的主機名稱={sorted(EXTRA_HOSTS) or '無'}")
+    if args.host not in auth.LOOPBACK:
+        print(f"  ⚠ 綁定在 {args.host}: 本程式只提供未加密的 HTTP, 請只在受信任的網路使用, 或改用 Tailscale serve / HTTPS 反向代理")
     if not args.no_open:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
