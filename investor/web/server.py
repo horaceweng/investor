@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from investor import paths
-from investor.web import api, auth, jobs, steps, store
+from investor.web import api, auth, autorefresh, jobs, steps, store
 from investor.web.access import AccessPolicy
 from investor.web.render import build_page
 
@@ -81,6 +81,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(401, {"error": "unauthorized"})
             return self._redirect("/login")
         if path == "/":
+            autorefresh.maybe_start()          # 資料過期才在背景更新 (不阻塞); 已是最新就不上網
             with store.lock:
                 page = build_page(store.state, logout=bool(self.password))
             return self._send(200, page)
@@ -141,6 +142,8 @@ def main(argv=None):
     if not store.state:
         print("尚無資料, 以快取建立初始資料 (約 1 分鐘)…")
         jobs.start_job("init")
+    else:
+        autorefresh.maybe_start()
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"

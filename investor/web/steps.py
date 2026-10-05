@@ -4,7 +4,9 @@ step 函式簽名統一為 (cached, universe): cached=True 時盡量用快取 (�
 ('sp500' / 'ndx' / 'watchlist'); 不依股票池的功能 (大師買進、Navellier 自己讀設定) 會忽略它。
 """
 from investor.data_sources.prices import performance
-from investor.navellier import rating, settings
+from datetime import date
+
+from investor.navellier import estimates, rating, settings
 from investor.screens import losers, magic, value
 from investor.superinvestors import buys
 from investor.web import presenters, store
@@ -35,10 +37,25 @@ def do_magic(cached, uni):
 def do_nav(cached, uni=None):
     mode = settings.load_mode()
     r = rating.run(verbose=False, mode=mode)
+    got_tech = any(c.get("trend") is not None or c.get("rsi") is not None for c in r["report"].values())
     store.state.setdefault("nav", {})[mode] = {
         "rows": presenters.navellier_rows(r, set(settings.load_watchlist())),
         "factors": presenters.navellier_factors(r), "asof": r["asof"],
-        "missing": r["missing"], "tickers": r["tickers"], "ts": store.now()}
+        "missing": r["missing"], "tickers": r["tickers"], "ts": store.now(),
+        "tech_date": str(date.today()) if got_tech else None, "tech_ts": store.now() if got_tech else None}
+
+
+def do_tech(cached, uni=None):
+    """只更新評級表的技術面欄位 (一次 TradingView 請求); 評級與基本面不動。"""
+    mode = settings.load_mode()
+    N = (store.state.get("nav") or {}).get(mode)
+    if not N:
+        raise RuntimeError("尚無評級資料, 請先更新評級")
+    if estimates.snapshot(N["tickers"]) is None:
+        raise RuntimeError("TradingView 技術面抓取失敗, 沿用舊資料")
+    tech = estimates.get_technicals()
+    N["rows"] = presenters.apply_technicals(N["rows"], tech)
+    N.update(tech_date=str(date.today()), tech_ts=store.now())
 
 
 def do_perf(cached, uni=None):
@@ -56,16 +73,20 @@ def do_perf(cached, uni=None):
 POOL_SCREENS = {"losers", "value", "magic"}   # 依股票池計算的選股功能 (自訂觀察清單不適用)
 STEPS = {"losers": ("13 週跌幅", do_losers), "value": ("價值面基本面", do_value),
          "buys": ("大師 13F", do_buys), "magic": ("神奇公式財報", do_magic),
-         "nav": ("Navellier 評級", do_nav)}
+         "nav": ("Navellier 評級", do_nav), "tech": ("技術面", do_tech)}
 TASKS = {                                     # 工作(按鈕) -> (顯示名稱, 步驟清單)
     "losers": ("更新股價與跌幅", ["losers"]),
     "value": ("更新基本面", ["value"]),
     "buys": ("更新 13F", ["buys"]),
     "magic": ("更新神奇公式財報", ["magic"]),
     "nav": ("更新 Navellier 評級", ["nav"]),
+    "tech": ("更新技術面", ["tech"]),
     "all": ("全部更新", ["losers", "value", "buys", "magic", "nav"]),
     "init": ("首次建立資料 (使用快取)", ["losers", "value", "buys", "magic", "nav"]),
 }
+
+
+NO_PERF = {"tech"}                            # 這些工作不需要重算股價表現 (沒有新增股票)
 
 
 def applicable(task: str, mode: str) -> bool:

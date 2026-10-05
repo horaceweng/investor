@@ -120,10 +120,11 @@ def snapshot(tickers, today=None):
 
     # 讀取現有快照, 同日覆蓋, 寫回
     snapshots = _load_snapshots()
-    # 移除當天已有的快照
+    # 同日合併: 當天已有的其他股票池 (如 S&P 500 與 Nasdaq 100 輪流更新) 不能被蓋掉, 同一檔則以新資料為準
+    merged = dict(next((s.get("data") or {} for s in snapshots if s.get("date") == today), {}))
+    merged.update(snap_data)
     snapshots = [s for s in snapshots if s.get("date") != today]
-    # 加入新快照
-    snapshots.append({"date": today, "data": snap_data})
+    snapshots.append({"date": today, "data": merged})
     # 按日期排序 (最新在後, 便於 compute_revisions 讀取)
     snapshots.sort(key=lambda s: s["date"])
 
