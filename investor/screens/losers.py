@@ -1,46 +1,21 @@
 #!/usr/bin/env python3
-"""列出過去 N 週 S&P 500 成分股中跌幅最大的公司。
+"""13 週跌幅: 列出股票池(S&P 500 / Nasdaq 100)中, 過去 N 週跌幅最大的公司。
 
-用法: .venv/bin/python sp500_losers.py [--weeks 13] [--top 40]
+用法: .venv/bin/python -m investor.screens.losers [--weeks 13] [--top 40] [--universe sp500|ndx]
 """
 import argparse
-import io
 from datetime import date, timedelta
 
 import pandas as pd
-import requests
 import yfinance as yf
 
-WIKI_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-
-
-def get_constituents() -> pd.DataFrame:
-    html = requests.get(WIKI_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=30).text
-    df = pd.read_html(io.StringIO(html))[0]
-    df["Symbol"] = df["Symbol"].str.replace(".", "-", regex=False)  # BRK.B -> BRK-B
-    return df[["Symbol", "Security", "GICS Sector"]]
-
-
-UNIVERSES = {"sp500": "S&P 500", "ndx": "Nasdaq 100"}
-
-
-def get_universe(name: str = "sp500") -> pd.DataFrame:
-    """回傳 DataFrame[Symbol, Security, GICS Sector]。Nasdaq 100 的板塊借用 S&P 500 的 GICS 分類
-    (Nasdaq 官方資料沒有板塊); 不在 S&P 500 內的少數幾檔板塊留空。"""
-    if name == "sp500":
-        return get_constituents()
-    if name != "ndx":
-        raise ValueError(f"未知的股票池: {name!r}")
-    from navellier import universe
-    ndx, sp = universe.get_nasdaq100(), universe.get_sp500()
-    sector = dict(zip(sp["symbol"], sp["sector"]))
-    return pd.DataFrame({"Symbol": ndx["symbol"], "Security": ndx["name"],
-                         "GICS Sector": ndx["symbol"].map(sector).fillna("")})
+from investor import paths
+from investor.universe import UNIVERSES, for_screens
 
 
 def compute(weeks: int = 13, top: int = 40, universe: str = "sp500"):
     """回傳 (結果 DataFrame, 起始交易日, 最新交易日)。"""
-    cons = get_universe(universe)
+    cons = for_screens(universe)
     end = date.today()
     start = end - timedelta(weeks=weeks)
 
@@ -76,7 +51,7 @@ def main():
     res.index += 1
     print(res[["代號", "Security", "GICS Sector", "起始價", "最新價", "13週%"]]
           .to_string(float_format=lambda x: f"{x:,.2f}"))
-    res.to_csv("sp500_losers.csv", index=False, encoding="utf-8-sig")
+    res.to_csv(paths.ensure_parent(paths.EXPORTS / f"losers_{args.universe}.csv"), index=False, encoding="utf-8-sig")
 
 
 if __name__ == "__main__":

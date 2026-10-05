@@ -1,84 +1,23 @@
 #!/usr/bin/env python3
 """價值投資人最近一季買進家數最多的股票 (資料: SEC 13F-HR)。
 
-用法: .venv/bin/python portfolio_buys.py [--quarter YYYY-MM-DD] [--top 20] [--history 4]
+用法: .venv/bin/python -m investor.superinvestors.buys [--quarter YYYY-MM-DD] [--top 20] [--history 4]
 季度預設自動偵測: 取「已有 75% 以上經理人申報」的最新一季; 可用 --quarter 手動指定。
 "買進" = 新建倉, 或持股數較上季增加 >= 5% (已用多數持有人同比例變動偵測並還原股票分割)。
 """
-import argparse, csv, json, os, re, time
-import xml.etree.ElementTree as ET
+import argparse
+import csv
+import re
 from collections import Counter, defaultdict
 from datetime import date
 
 import pandas as pd
-import requests
 
-from sec_ua import user_agent
-import yfinance as yf
+from investor import paths
+from investor.data_sources import sec
+from investor.data_sources.openfigi import cusip_to_ticker
 
-CACHE = "13f_cache"
 ETF_RE = re.compile(r"\b(ETF|ISHARES|SPDR|VANGUARD|INVESCO|PROSHARES|SELECT SECTOR|TRUST UNITS|INDEX FUND|WISDOMTREE|VANECK|FUND)\b", re.I)
-
-
-def get(url, max_age=None):
-    """下載並快取; max_age(秒)給定時, 快取超過就重抓 (抓不到則退回舊快取)。申報內容不會變, 故不設期限。"""
-    path = os.path.join(CACHE, re.sub(r"\W+", "_", url))
-    fresh = os.path.exists(path) and (max_age is None or time.time() - os.path.getmtime(path) < max_age)
-    if fresh:
-        return open(path, "rb").read()
-    for _ in range(4):
-        r = requests.get(url, headers={"User-Agent": user_agent()}, timeout=30)
-        if r.status_code == 200:
-            os.makedirs(CACHE, exist_ok=True)
-            open(path, "wb").write(r.content)
-            time.sleep(0.15)
-            return r.content
-        time.sleep(1.5)
-    return open(path, "rb").read() if os.path.exists(path) else None
-
-
-SUBMISSIONS_TTL = 6 * 3600  # 申報清單會有新申報, 6 小時後重抓
-
-
-def submissions(cik):
-    return json.loads(get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json", SUBMISSIONS_TTL))
-
-
-def find_filing(cik, quarter):
-    f = submissions(cik)["filings"]["recent"]
-    for form, rd, acc in zip(f["form"], f["reportDate"], f["accessionNumber"]):
-        if form == "13F-HR" and rd == quarter:
-            return acc
-    return None
-
-
-def holdings(cik, acc):
-    base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc.replace('-', '')}"
-    idx = get(base + "/index.json")
-    if not idx:
-        return None
-    items = json.loads(idx)["directory"]["item"]
-    xmls = [i for i in items if i["name"].lower().endswith(".xml") and "primary_doc" not in i["name"].lower()]
-    if not xmls:
-        return None
-    xmls.sort(key=lambda i: int(i.get("size") or 0), reverse=True)
-    data = get(f"{base}/{xmls[0]['name']}")
-    if not data:
-        return None
-    out = defaultdict(lambda: [0.0, ""])
-    for el in ET.fromstring(data).iter():
-        if not el.tag.endswith("infoTable"):
-            continue
-        d = {c.tag.split("}")[-1]: c for c in el.iter()}
-        if "putCall" in d:
-            continue
-        sh = d.get("sshPrnamt")
-        if sh is None or d["sshPrnamtType"].text != "SH":
-            continue
-        cusip = d["cusip"].text.strip().upper()
-        out[cusip][0] += float(sh.text)
-        out[cusip][1] = d["nameOfIssuer"].text.strip()
-    return out
 
 
 def prev_quarters(q, n):
@@ -133,7 +72,7 @@ def detect_latest_quarter(mgrs, min_ratio: float = 0.75):
     cands = prev_quarters(newest, 2)[::-1]   # 新 -> 舊: 最近完整季底, 前一季, 前兩季
     filed = []
     for m in mgrs:
-        f = submissions(int(m["cik"]))["filings"]["recent"]
+        f = sec.submissions(int(m["cik"]))["filings"]["recent"]
         filed.append({rd for form, rd in zip(f["form"], f["reportDate"]) if form == "13F-HR"})
     counts = {q: sum(q in s for s in filed) for q in cands}
     print("  各季申報人數:", counts, flush=True)
@@ -143,25 +82,9 @@ def detect_latest_quarter(mgrs, min_ratio: float = 0.75):
     return cands[-1]
 
 
-def figi(cusips):
-    tick = {}
-    for exch in ("US", None):
-        todo = [c for c in cusips if not tick.get(c)]
-        for i in range(0, len(todo), 10):
-            chunk = todo[i:i + 10]
-            jobs = [{"idType": "ID_CUSIP", "idValue": c, **({"exchCode": exch} if exch else {})} for c in chunk]
-            r = requests.post("https://api.openfigi.com/v3/mapping", json=jobs, timeout=30)
-            for c, res in zip(chunk, r.json() if r.ok else []):
-                d = [x for x in res.get("data", []) if x.get("exchCode") == "US"] or res.get("data", [])
-                eq = [x for x in d if x.get("securityType") in ("Common Stock", "REIT", "ADR", "Depositary Receipt")]
-                tick[c] = (eq or d or [{}])[0].get("ticker", "")
-            time.sleep(2.5)
-    return tick
-
-
 def compute(quarter: str = None, top: int = 20, history: int = 4):
     """回傳 (df, 可比較經理人數, 季底日期清單); quarter=None 時自動偵測最新一季。"""
-    mgrs = list(csv.DictReader(open("managers.csv")))
+    mgrs = list(csv.DictReader(open(paths.MANAGERS_CSV)))
     if quarter is None:
         quarter = detect_latest_quarter(mgrs)
         print(f"  自動偵測最新一季: {quarter}", flush=True)
@@ -170,8 +93,8 @@ def compute(quarter: str = None, top: int = 20, history: int = 4):
     for m in mgrs:
         cik, hs = int(m["cik"]), {}
         for q in quarters:
-            acc = find_filing(cik, q)
-            h = holdings(cik, acc) if acc else None
+            acc = sec.find_filing(cik, q)
+            h = sec.holdings(cik, acc) if acc else None
             if h:
                 hs[q] = h
         data[m["manager"]] = hs
@@ -197,7 +120,7 @@ def compute(quarter: str = None, top: int = 20, history: int = 4):
         rows.append(row)
     df = pd.DataFrame(rows).sort_values(["買進家數", "新建倉"], ascending=False).head(top).reset_index(drop=True)
 
-    df.insert(0, "代號", df["cusip"].map(figi(df["cusip"].tolist())))
+    df.insert(0, "代號", df["cusip"].map(cusip_to_ticker(df["cusip"].tolist())))
     # OpenFIGI 查不到的外國公司, 以公司名補上
     manual = {"TE CONNECTIVITY": "TEL", "CRH PLC": "CRH"}
     df["代號"] = [t or next((v for k, v in manual.items() if k in n.upper()), "") for t, n in zip(df["代號"], df["公司"])]
@@ -214,7 +137,7 @@ def main():
 
     df, n_mgr, quarters = compute(args.quarter, args.top, args.history)
     df.index += 1
-    df.to_csv("portfolio_buys.csv", index_label="排名", encoding="utf-8-sig")
+    df.to_csv(paths.ensure_parent(paths.EXPORTS / "superinvestor_buys.csv"), index_label="排名", encoding="utf-8-sig")
     tcols = [f"買進@{q[:7]}" for q in quarters[1:]]
     print(f"\n=== {quarters[-1]} 季買進家數最多 Top {args.top}  (本季可比較經理人 {n_mgr} 位) ===")
     print(df[["代號", "公司"] + tcols + ["新建倉", "持有家數", "持有家數變化"]].to_string())

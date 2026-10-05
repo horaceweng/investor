@@ -1,12 +1,12 @@
 """遠端存取用的簡易密碼登入 + 允許的主機名稱 (只用標準函式庫)。
 
 預設(完全沒設定)時行為與以前相同: 只接受本機網址、不需登入。要讓外部裝置連進來:
-  - 密碼:       環境變數 DASHBOARD_PASSWORD, 或檔案 data/dashboard_password.txt
-  - 允許的網址: 環境變數 DASHBOARD_HOSTS (逗號分隔), 或檔案 data/allowed_hosts.txt, 例如 Tailscale 的 xxx.ts.net 主機名
-  - Tailscale 帳號: 環境變數 DASHBOARD_TAILSCALE_USERS, 或檔案 data/tailscale_users.txt (登入名稱, 如 name@example.com)
+  - 密碼:       環境變數 DASHBOARD_PASSWORD, 或檔案 data/config/dashboard_password.txt
+  - 允許的網址: 環境變數 DASHBOARD_HOSTS (逗號分隔), 或檔案 data/config/allowed_hosts.txt, 例如 Tailscale 的 xxx.ts.net 主機名
+  - Tailscale 帳號: 環境變數 DASHBOARD_TAILSCALE_USERS, 或檔案 data/config/tailscale_users.txt (登入名稱, 如 name@example.com)
     `tailscale serve` 會替來自 tailnet 的請求加上 Tailscale-User-Login 標頭 (公開的 Funnel 請求沒有); 設定後, 非本機網址的請求
     必須帶有符合的標頭才放行, 因此「只有登入你的 Tailscale 的裝置」才連得進來。此標頭只有在程式綁定本機(127.0.0.1)時才可信。
-  - Tailscale 裝置: 環境變數 DASHBOARD_TAILSCALE_DEVICES, 或檔案 data/tailscale_devices.txt (裝置名稱, 如 iphone-14-pro-max)
+  - Tailscale 裝置: 環境變數 DASHBOARD_TAILSCALE_DEVICES, 或檔案 data/config/tailscale_devices.txt (裝置名稱, 如 iphone-14-pro-max)
     帳號只能辨識「人」; 設定裝置名單後, 程式會用 X-Forwarded-For (tailscale serve 帶入的發送者 Tailscale IP) 呼叫
     `tailscale whois` 查出是哪一台裝置, 不在名單內一律拒絕 (同帳號下的其他裝置也不行)。
 設了額外主機名稱或對外綁定位址卻沒設密碼也沒設 Tailscale 帳號時, main.py 會拒絕啟動。
@@ -22,9 +22,9 @@ import shutil
 import subprocess
 import time
 from html import escape
-from pathlib import Path
 
-DATA = Path(__file__).resolve().parent / "data"
+from investor import paths
+
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 COOKIE = "dash_session"
 SESSION_DAYS = 30
@@ -35,7 +35,7 @@ def _read(env, fname):
     v = os.environ.get(env, "").strip()
     if v:
         return v
-    f = DATA / fname
+    f = paths.CONFIG / fname
     return f.read_text().strip() if f.exists() else ""
 
 
@@ -81,9 +81,9 @@ def device_of(ip):
 
 
 def _secret():
-    f = DATA / "session_secret"
+    f = paths.CONFIG / "session_secret"
     if not f.exists():
-        DATA.mkdir(exist_ok=True)
+        paths.ensure_parent(f)
         fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as fh:
             fh.write(secrets.token_hex(32))

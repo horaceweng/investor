@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """S&P 500 價值面排行: 本益比最低、股價淨值比最低、股息殖利率最高。
 
-用法: .venv/bin/python sp500_value.py [--top 40]
-基本面資料抓一次後存成 sp500_fundamentals.csv。
+用法: .venv/bin/python -m investor.screens.value [--top 40] [--universe sp500|ndx] [--cached]
+基本面資料抓一次後存成 data/cache/screens/<股票池>_fundamentals.csv。
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -10,13 +10,14 @@ from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import yfinance as yf
 
-from sp500_losers import UNIVERSES, get_universe
-from yf_util import require_enough, retry
+from investor import paths
+from investor.data_sources.yahoo import require_enough, retry
+from investor.universe import UNIVERSES, for_screens
 
 
 
-def cache_path(universe: str) -> str:
-    return "sp500_fundamentals.csv" if universe == "sp500" else f"{universe}_fundamentals.csv"
+def cache_path(universe: str):
+    return paths.SCREEN_CACHE / f"{universe}_fundamentals.csv"
 
 
 def fetch(sym: str) -> dict:
@@ -42,12 +43,12 @@ def compute(top: int = 40, use_cache: bool = False, universe: str = "sp500") -> 
     if use_cache:
         df = pd.read_csv(CACHE)
     else:
-        cons = get_universe(universe)
+        cons = for_screens(universe)
         with ThreadPoolExecutor(max_workers=4) as ex:
             rows = list(ex.map(fetch, cons["Symbol"]))
         df = pd.DataFrame(rows).merge(cons, left_on="代號", right_on="Symbol")
-        require_enough(int(df["股價淨值比"].notna().sum()), len(df), "價值面基本面", CACHE)
-        df.to_csv(CACHE, index=False, encoding="utf-8-sig")
+        require_enough(int(df["股價淨值比"].notna().sum()), len(df), "價值面基本面", str(CACHE))
+        df.to_csv(paths.ensure_parent(CACHE), index=False, encoding="utf-8-sig")
 
     # 本益比/淨值比為負(虧損或淨值為負)沒有比較意義，排除
     pe = df[df["本益比"] > 0]

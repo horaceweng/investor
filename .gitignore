@@ -3,13 +3,5 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# 本機設定與產生的資料 (可重新產生; 含個人觀察清單與 SEC User-Agent, 不公開)
+# 執行期資料 (可重新產生; 含個人觀察清單、SEC User-Agent、遠端存取名單, 不公開) -- 結構見 README
 data/
-data_navellier/
-13f_cache/
-*_fundamentals.csv
-*_magic_raw.csv
-*_magic_partial.csv
-sp500_losers.csv
-sp500_magic.csv
-portfolio_buys.csv

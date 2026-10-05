@@ -6,18 +6,18 @@
   淨營運資金 = (流動資產 - 現金) - (流動負債 - 短期借款)
 兩項各自排名 (1=最好) 後相加, 總和越小越好。排除金融股、公用事業股, 以及 EBIT<=0 或投入資本<=0 者。
 
-用法: .venv/bin/python sp500_magic.py [--top 30]
+用法: .venv/bin/python -m investor.screens.magic [--top 30] [--universe sp500|ndx] [--cached]
 """
 import argparse
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import yfinance as yf
 
-from sp500_losers import UNIVERSES, get_universe
-from yf_util import require_enough, retry
+from investor import paths
+from investor.data_sources.yahoo import require_enough, retry
+from investor.universe import UNIVERSES, for_screens
 
 EXCLUDE = {"Financials", "Utilities"}
 
@@ -49,20 +49,20 @@ def fetch(sym):
         return {"代號": sym}
 
 
-PARTIAL = "sp500_magic_partial.csv"   # 逐檔財報(各股票池共用), 每列帶抓取時間 ts
+PARTIAL = paths.MAGIC_PARTIAL           # 逐檔財報(各股票池共用), 每列帶抓取時間 ts
 PARTIAL_TTL = 3 * 24 * 3600            # 財報一季才更新一次; 超過 3 天視為過期, 更新時重抓
 
 
-def raw_path(universe: str) -> str:
-    return "sp500_magic_raw.csv" if universe == "sp500" else f"{universe}_magic_raw.csv"
+def raw_path(universe: str):
+    return paths.SCREEN_CACHE / f"{universe}_magic_raw.csv"
 
 
 def _load_partial():
-    if not os.path.exists(PARTIAL):
+    if not PARTIAL.exists():
         return pd.DataFrame(columns=["代號", "ts"])
     have = pd.read_csv(PARTIAL)
     if "ts" not in have:                      # 舊檔沒有時間欄: 以檔案修改時間代替
-        have["ts"] = os.path.getmtime(PARTIAL)
+        have["ts"] = PARTIAL.stat().st_mtime
     return have
 
 
@@ -72,7 +72,7 @@ def compute(top: int = 30, use_cache: bool = False, universe: str = "sp500"):
     if use_cache:
         df = pd.read_csv(RAW)
     else:
-        cons = get_universe(universe)
+        cons = for_screens(universe)
         # 可續傳: 成功抓到的列存在 PARTIAL, 被限流時下次只補抓缺的/過期的
         have = _load_partial()
         fresh = have[have["ts"] > time.time() - PARTIAL_TTL]
@@ -86,7 +86,7 @@ def compute(top: int = 30, use_cache: bool = False, universe: str = "sp500"):
             # 過期但這次重抓失敗(如被限流)的舊資料先保留, 不要丟掉
             stale_ok = have[have["代號"].isin(todo) & ~have["代號"].isin(new["代號"] if len(new) else [])]
             out = pd.concat([keep, stale_ok, new])
-            out.to_csv(PARTIAL, index=False)
+            out.to_csv(paths.ensure_parent(PARTIAL), index=False)
             return out
 
         with ThreadPoolExecutor(max_workers=3) as ex:
@@ -96,8 +96,8 @@ def compute(top: int = 30, use_cache: bool = False, universe: str = "sp500"):
                     save()
         ok_rows = save()
         df = ok_rows.drop(columns=["ts"]).merge(cons, left_on="代號", right_on="Symbol")
-        require_enough(len(df), len(cons), "神奇公式財報", RAW, min_ratio=0.6)
-        df.to_csv(RAW, index=False, encoding="utf-8-sig")
+        require_enough(len(df), len(cons), "神奇公式財報", str(RAW), min_ratio=0.6)
+        df.to_csv(paths.ensure_parent(RAW), index=False, encoding="utf-8-sig")
     total = len(df)
 
     df = df[~df["GICS Sector"].isin(EXCLUDE)].copy()
@@ -123,7 +123,7 @@ def main():
 
     res, (total, after, ok) = compute(args.top, args.cached, args.universe)
     res.index += 1
-    res.to_csv("sp500_magic.csv", index_label="排名", encoding="utf-8-sig")
+    res.to_csv(paths.ensure_parent(paths.EXPORTS / f"magic_{args.universe}.csv"), index_label="排名", encoding="utf-8-sig")
     print(f"股票池: {total} 檔 -> 排除金融/公用事業後 {after} -> 資料完整且為正 {ok}")
     print(res[["代號", "Security", "GICS Sector", "市值(B)", "盈餘殖利率%", "資本報酬率%", "EY名次", "ROC名次", "總名次"]]
           .to_string(float_format=lambda x: f"{x:,.1f}"))

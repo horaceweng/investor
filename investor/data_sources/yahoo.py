@@ -1,4 +1,4 @@
-"""yfinance 限流處理: 遇到 YFRateLimitError 時指數退避重試。"""
+"""Yahoo Finance (yfinance) 共用處理: 限流時指數退避重試、抓回資料太少時中止以免覆蓋快取。"""
 import time
 
 from yfinance.exceptions import YFRateLimitError

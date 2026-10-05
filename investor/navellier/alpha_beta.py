@@ -5,22 +5,17 @@ formula (Alpha / 52-week weekly-return std dev), confirmed via public sources �
 NOT filter out short-covering-driven alpha, which he discloses but never publishes the
 exact method for (proprietary).
 """
-import sys
 import warnings
 from datetime import date, timedelta
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from yf_util import retry  # noqa: E402  (限流時指數退避重試)
+from investor.data_sources.yahoo import retry   # 限流時指數退避重試
 
 warnings.filterwarnings("ignore")
 
-TICKERS = ["NVDA", "TSM", "AMD", "AVGO", "GOOG", "MSFT", "AAPL", "MU", "SNDK",
-           "COST", "BRK-B", "TSLA", "SPCX"]
 BENCH = "SPY"   # S&P 500 total-return proxy
 RF = "^IRX"     # 13-week T-bill (annualized %)
 MIN_WEEKS = 52  # 少於 52 週資料者不參與評級(統計上太薄, 如剛上市的股票)
@@ -88,7 +83,8 @@ def dl(tickers, period):
 
 def compute(tickers=None, bench=BENCH, verbose=True, history_weeks=0):
     """回傳 (results, missing, weekly_hist); weekly_hist 為回算的各週 nav_score (history_weeks=0 時為 {})。"""
-    tickers = tickers or TICKERS
+    if not tickers:
+        raise ValueError("tickers 不能是空的")
     all_syms = tickers + [bench]
     if verbose:
         print("downloading daily prices (6y)...", flush=True)
@@ -169,9 +165,9 @@ def compute(tickers=None, bench=BENCH, verbose=True, history_weeks=0):
 
 if __name__ == "__main__":
     import json
-    results, missing, _ = compute()
-    out = {"results": results, "missing": missing,
-           "method": ("industry: 5Y monthly excess returns vs SPY, rf=13W T-bill; "
-                      "navellier-style: 52W weekly (stock-mkt), score=ann_alpha/ann_sd (reward/risk), "
-                      "grades=quintiles (approx, not short-covering-adjusted)")}
-    print(json.dumps(out, indent=1))
+    import sys
+    results, missing, _ = compute(sys.argv[1:] or ["NVDA", "MSFT", "AAPL"])     # python -m investor.navellier.alpha_beta NVDA AMD ...
+    print(json.dumps({"results": results, "missing": missing,
+                      "method": ("industry: 5Y monthly excess returns vs SPY, rf=13W T-bill; "
+                                 "navellier-style: 52W weekly (stock-mkt), score=ann_alpha/ann_sd (reward/risk), "
+                                 "grades=quintiles (approx, not short-covering-adjusted)")}, indent=1))
