@@ -145,14 +145,13 @@ def _navellier_columns(mode):
 
     # 技術面欄位 (日線, 僅供參考, 不影響評級)
     tech_cols = [("RSI", "RSI", "num"), ("RSI區間", "RSI區間", "text"), ("趨勢", "趨勢", "tone"), ("距52週高%", "距高%", "num"),
-                 ("MACD", "MACD", "tone"), ("技術評等", "技術評等", "tone"), ("財報日", "財報日", "text"),
-                 ("最新財報", "最新財報", "text"), ("EPS驚喜%", "EPS驚喜", "pct"), ("營收驚喜%", "營收驚喜", "pct"),
-                 ("財報結果", "結果", "tone"),
-                 ("提示", "提示", "text")]
+                 ("MACD", "MACD", "tone"), ("技術評等", "技術評等", "tone"), ("提示", "提示", "text")]
     ncols += tech_cols
 
     ntail = [("近期分數", "近期 Alpha/SD (舊→新)", "series")]   # 長文字放最後, 不擠掉股價表現欄
     fcols = [("代號", "代號", "ticker")] + [(k, lab, "num") for k, lab in FACTOR_LABELS]
+    fcols += [("下次財報", "下次財報", "text"), ("最新財報", "最新財報", "text"),     # 財報相關屬基本面
+              ("EPS驚喜%", "最新季EPS驚喜", "pct"), ("營收驚喜%", "最新季營收驚喜", "pct"), ("財報結果", "結果", "tone")]
     return ncols, ntail, fcols
 
 

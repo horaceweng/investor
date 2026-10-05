@@ -55,6 +55,8 @@ def do_tech(cached, uni=None):
         raise RuntimeError("TradingView 技術面抓取失敗, 沿用舊資料")
     tech = estimates.get_technicals()
     N["rows"] = presenters.apply_technicals(N["rows"], tech)
+    if N.get("factors") is not None:
+        N["factors"] = presenters.apply_earnings(N["factors"], tech)
     N.update(tech_date=str(date.today()), tech_ts=store.now())
 
 

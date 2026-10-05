@@ -75,12 +75,33 @@ class SnapshotRoundTrip(unittest.TestCase):
 
 
 class Display(unittest.TestCase):
-    def test_columns_in_rows(self):
-        rows = pd.DataFrame([{"代號": "AAA", "綜合評級": "B", "動能_tip": ""}])
-        out = presenters.apply_technicals(rows, {"AAA": technicals.derive_result(
-            {"eps_pct": 4.0, "rev_pct": 1.0, "date": "2026-10-01"}, "2026-10-05")})
+    """財報欄位屬基本面: 出現在因子明細表, 不在主表的技術面欄位。"""
+
+    RES = technicals.derive_result({"eps_pct": 4.0, "rev_pct": 1.0, "date": "2026-10-01"}, "2026-10-05")
+
+    def test_earnings_in_factor_table(self):
+        fac = pd.DataFrame([{"代號": "AAA", "roe_ttm": 10.0}])
+        out = presenters.apply_earnings(fac, {"AAA": {**self.RES, "next_report": "2026-10-29", "days_to_report": 24}})
         self.assertEqual((out.at[0, "EPS驚喜%"], out.at[0, "營收驚喜%"], out.at[0, "財報結果"], out.at[0, "最新財報"]),
                          (4.0, 1.0, "雙 beat", "2026-10-01"))
+        self.assertEqual((out.at[0, "下次財報"], out.at[0, "roe_ttm"]), ("2026-10-29", 10.0))
+        self.assertIn("倒數 24 天", out.at[0, "下次財報_tip"])
+
+    def test_not_in_technical_columns(self):
+        rows = pd.DataFrame([{"代號": "AAA", "綜合評級": "B", "動能_tip": ""}])
+        out = presenters.apply_technicals(rows, {"AAA": {**self.RES, "rsi": 50.0}})
+        for k in presenters.EARN_COLS:
+            self.assertNotIn(k, out.columns)
+        self.assertEqual(out.at[0, "RSI"], 50.0)
+
+    def test_columns_registered_on_factor_table(self):
+        from investor.web.render import tabs
+        _, _, fcols = tabs._navellier_columns("sp500")
+        names = [c[0] for c in fcols]
+        for k in ("下次財報", "最新財報", "EPS驚喜%", "營收驚喜%", "財報結果"):
+            self.assertIn(k, names)
+        ncols, _, _ = tabs._navellier_columns("sp500")
+        self.assertNotIn("EPS驚喜%", [c[0] for c in ncols])
 
 
 if __name__ == "__main__":

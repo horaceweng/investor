@@ -7,8 +7,8 @@ FACTOR_LABELS = [("sales_yoy", "營收年增%"), ("margin_exp_yoy_pp", "營業�
                  ("fcf_yoy", "FCF年增%"), ("roe_ttm", "ROE(TTM)%"), ("est_revision", "預估修正%")]
 
 
-TECH_COLS = ["RSI", "RSI_tip", "RSI區間", "趨勢", "距52週高%", "MACD", "技術評等", "財報日", "財報日_tip",
-             "最新財報", "EPS驚喜%", "營收驚喜%", "財報結果", "提示"]
+TECH_COLS = ["RSI", "RSI_tip", "RSI區間", "趨勢", "距52週高%", "MACD", "技術評等", "提示"]
+EARN_COLS = ["下次財報", "下次財報_tip", "最新財報", "EPS驚喜%", "營收驚喜%", "財報結果"]
 
 
 def tech_cells(tech: dict, overall, cooling) -> dict:
@@ -17,14 +17,28 @@ def tech_cells(tech: dict, overall, cooling) -> dict:
     from investor.navellier import technicals
     rsi, zone = tech.get("rsi"), tech.get("rsi_zone")
     rsi_tip = "" if rsi is None else f"RSI {rsi:.1f}" + (" (過熱, >=70)" if zone == "過熱" else " (超賣, <=30)" if zone == "超賣" else "")
-    nr, days = tech.get("next_report"), tech.get("days_to_report")
-    nr_tip = "" if not nr else f"{nr} (倒數 {days} 天)" if days is not None else nr
     hints = technicals.hints(tech, fund_grade=overall, cooling_flag=cooling or "") if tech else []
     return {"RSI": rsi, "RSI_tip": rsi_tip, "RSI區間": zone, "趨勢": tech.get("trend"),
             "距52週高%": tech.get("off_high_pct"), "MACD": tech.get("macd_dir"), "技術評等": tech.get("tech_rating"),
-            "財報日": nr, "財報日_tip": nr_tip, "最新財報": tech.get("last_report"),
+            "提示": "；".join(hints)}
+
+
+def earnings_cells(tech: dict) -> dict:
+    """財報相關欄位 (屬基本面): 下次財報日、最新一季財報日與 EPS/營收 beat/miss。tech 為 get_technicals 的單檔結果 (可為空)。"""
+    nr, days = tech.get("next_report"), tech.get("days_to_report")
+    nr_tip = "" if not nr else f"{nr} (倒數 {days} 天)" if days is not None else nr
+    return {"下次財報": nr, "下次財報_tip": nr_tip, "最新財報": tech.get("last_report"),
             "EPS驚喜%": tech.get("eps_surprise_pct"), "營收驚喜%": tech.get("rev_surprise_pct"),
-            "財報結果": tech.get("result_label"), "提示": "；".join(hints)}
+            "財報結果": tech.get("result_label")}
+
+
+def apply_earnings(factors: pd.DataFrame, tech: dict) -> pd.DataFrame:
+    """用新的資料更新基本面因子明細表的財報欄位, 其餘欄位不動。"""
+    out = factors.copy()
+    for i, r in out.iterrows():
+        for k, v in earnings_cells(tech.get(r["代號"]) or {}).items():
+            out.at[i, k] = v
+    return out
 
 
 def apply_technicals(rows: pd.DataFrame, tech: dict) -> pd.DataFrame:
@@ -107,5 +121,6 @@ def navellier_factors(r: dict) -> pd.DataFrame:
                     tip = f"相隔 {days} 天的快照比較；" + tip
             if tip:
                 row[key + "_tip"] = tip
+        row.update(earnings_cells(r["report"].get(t) or {}))
         frows.append(row)
     return pd.DataFrame(frows)
