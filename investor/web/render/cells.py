@@ -6,8 +6,8 @@ import pandas as pd
 from investor.data_sources.prices import PERF
 
 
-TONE_UP = {"多頭", "轉強", "買進", "強力買進"}
-TONE_DN = {"空頭", "轉弱", "賣出", "強力賣出"}
+TONE_UP = {"多頭", "轉強", "買進", "強力買進", "雙 beat"}
+TONE_DN = {"空頭", "轉弱", "賣出", "強力賣出", "雙 miss"}
 
 
 def esc(x):

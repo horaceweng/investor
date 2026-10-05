@@ -27,7 +27,8 @@
   * 若條件不符或沒有足夠舊快照 -> None (略過)
 """
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from investor import paths
 from investor.data_sources import tradingview
@@ -58,6 +59,14 @@ def _save_snapshots(snapshots):
     """寫入快照 (原子操作)。"""
     lines = [json.dumps(s, ensure_ascii=False) for s in snapshots]
     atomic_write(paths.ESTIMATES, "\n".join(lines) + "\n" if lines else "")
+
+
+def _unix_date(v):
+    """unix 秒 -> 美東日期 'YYYY-MM-DD' (美股財報多在收盤後發布, 用 UTC 會多算一天); 空值或無法轉換回傳 None。"""
+    try:
+        return datetime.fromtimestamp(int(v), tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d") if v is not None else None
+    except (ValueError, OSError, OverflowError, TypeError):
+        return None
 
 
 def snapshot(tickers, today=None):
@@ -100,6 +109,13 @@ def snapshot(tickers, today=None):
             "rec": tv_row.get("recommendation_mark"),
             "rec_n": tv_row.get("recommendation_total"),
             "next_report": tv_row.get("earnings_release_next_date"),
+        }
+
+        # 最新一季財報結果 (beat/miss); 每次財報後會變, 存在快照裡日後可回頭驗證
+        snap_data[ticker]["result"] = {
+            "eps_pct": tv_row.get("eps_surprise_percent_fq"),
+            "rev_pct": tv_row.get("revenue_surprise_percent_fq"),
+            "date": _unix_date(tv_row.get("earnings_release_date")),
         }
 
         # 技術面資料 (抓不到時只警告, 不影響快照)
@@ -269,9 +285,8 @@ def get_technicals(today=None):
     tech_results = {}
     for ticker, snap_ticker in latest["data"].items():
         if "tech" in snap_ticker:
-            tech_data = snap_ticker["tech"]
-            # 用 derive_technicals 計算完整的技術指標
-            tech = technicals.derive_from_snapshot(tech_data, today)
+            tech = technicals.derive_from_snapshot(snap_ticker["tech"], today)
+            tech.update(technicals.derive_result(snap_ticker.get("result"), today))   # 最新財報 beat/miss
             tech_results[ticker] = tech
 
     return tech_results

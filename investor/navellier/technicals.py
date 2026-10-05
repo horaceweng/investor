@@ -120,6 +120,37 @@ def derive_technicals(raw, today=None):
     return result
 
 
+def _verdict(pct):
+    """驚喜% -> 'beat' / 'miss' / 'inline' / None (缺資料)。大於 0 即 beat, 小於 0 即 miss。"""
+    if pct is None or pct != pct:
+        return None
+    return "beat" if pct > 0 else "miss" if pct < 0 else "inline"
+
+
+def derive_result(res, today=None):
+    """最新一季財報結果 (beat/miss)。res: 快照的 result 子物件 {eps_pct, rev_pct, date}。
+    回傳 eps_surprise_pct、rev_surprise_pct、last_report、days_since_report、result_label。
+    標籤: 雙 beat / 雙 miss / EPS beat、營收 miss / EPS miss、營收 beat / 符合預期; 缺資料 None。"""
+    out = {"eps_surprise_pct": None, "rev_surprise_pct": None, "last_report": None,
+           "days_since_report": None, "result_label": None}
+    if not res:
+        return out
+    eps, rev = res.get("eps_pct"), res.get("rev_pct")
+    out.update(eps_surprise_pct=eps, rev_surprise_pct=rev, last_report=res.get("date"))
+    try:
+        d = date.fromisoformat(res["date"])
+        out["days_since_report"] = ((date.fromisoformat(today) if today else date.today()) - d).days
+    except (KeyError, ValueError, TypeError):
+        pass
+    e, r = _verdict(eps), _verdict(rev)
+    if e and r:
+        out["result_label"] = ("雙 beat" if e == r == "beat" else "雙 miss" if e == r == "miss"
+                               else "符合預期" if e == r == "inline" else f"EPS {e}、營收 {r}")
+    elif e:
+        out["result_label"] = f"EPS {e}"
+    return out
+
+
 def derive_from_snapshot(tech, today=None):
     """由快照裡存的 tech 子物件 (close/rsi/sma50/sma200/high52/macd_hist/rec/next_report) 還原完整技術面。
     快照欄位名與 TradingView 原始欄位不同, 這裡對應回去再交給 derive_technicals, 讓讀快照與即時抓取結果一致。"""
@@ -159,6 +190,15 @@ def hints(row, fund_grade=None, cooling_flag=None):
     # 冷卻規則判定「建議移除」且趨勢空頭
     if cooling_flag and "❌ 建議剔除" in cooling_flag and row.get("trend") == "空頭":
         hints_list.append("弱勢確認")
+
+    # 剛公布的財報 (30 天內): beat 但營收 miss、或雙 miss, 是品質較差的訊號
+    since = row.get("days_since_report")
+    if since is not None and since <= 30:
+        e, r = _verdict(row.get("eps_surprise_pct")), _verdict(row.get("rev_surprise_pct"))
+        if e == "miss" and r == "miss":
+            hints_list.append("財報雙 miss")
+        elif e == "beat" and r == "miss":
+            hints_list.append("EPS beat 但營收 miss")
 
     # 財報在 N 天內
     if row.get("report_soon"):

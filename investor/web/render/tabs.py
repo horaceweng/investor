@@ -146,6 +146,8 @@ def _navellier_columns(mode):
     # 技術面欄位 (日線, 僅供參考, 不影響評級)
     tech_cols = [("RSI", "RSI", "num"), ("RSI區間", "RSI區間", "text"), ("趨勢", "趨勢", "tone"), ("距52週高%", "距高%", "num"),
                  ("MACD", "MACD", "tone"), ("技術評等", "技術評等", "tone"), ("財報日", "財報日", "text"),
+                 ("最新財報", "最新財報", "text"), ("EPS驚喜%", "EPS驚喜", "pct"), ("營收驚喜%", "營收驚喜", "pct"),
+                 ("財報結果", "結果", "tone"),
                  ("提示", "提示", "text")]
     ncols += tech_cols
 

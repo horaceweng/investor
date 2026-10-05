@@ -100,6 +100,9 @@ def run(tickers=None, verbose=False, mode=None):
                 "next_report": tech_data.get("next_report"),
                 "days_to_report": tech_data.get("days_to_report"),
                 "report_soon": tech_data.get("report_soon"),
+                "last_report": tech_data.get("last_report"), "days_since_report": tech_data.get("days_since_report"),
+                "eps_surprise_pct": tech_data.get("eps_surprise_pct"), "rev_surprise_pct": tech_data.get("rev_surprise_pct"),
+                "result_label": tech_data.get("result_label"),
             })
 
             # 計算提示 (使用 overall 評級與 cooling 字串)

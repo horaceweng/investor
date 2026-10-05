@@ -34,6 +34,7 @@ ESTIMATE_COLUMNS = [
     "recommendation_mark",                  # 分析師建議 (數值: 1=buy, 5=sell)
     "recommendation_total",                 # 分析師人數
     "earnings_release_next_date",           # 下次財報日 (unix 秒)
+    "earnings_release_date",                # 最近一次財報日 (unix 秒)
     "eps_surprise_percent_fq",              # 最新季 EPS 驚喜%
     "revenue_surprise_percent_fq",          # 最新季營收驚喜%
 ]

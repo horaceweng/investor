@@ -7,7 +7,8 @@ FACTOR_LABELS = [("sales_yoy", "營收年增%"), ("margin_exp_yoy_pp", "營業�
                  ("fcf_yoy", "FCF年增%"), ("roe_ttm", "ROE(TTM)%"), ("est_revision", "預估修正%")]
 
 
-TECH_COLS = ["RSI", "RSI_tip", "RSI區間", "趨勢", "距52週高%", "MACD", "技術評等", "財報日", "財報日_tip", "提示"]
+TECH_COLS = ["RSI", "RSI_tip", "RSI區間", "趨勢", "距52週高%", "MACD", "技術評等", "財報日", "財報日_tip",
+             "最新財報", "EPS驚喜%", "營收驚喜%", "財報結果", "提示"]
 
 
 def tech_cells(tech: dict, overall, cooling) -> dict:
@@ -21,7 +22,9 @@ def tech_cells(tech: dict, overall, cooling) -> dict:
     hints = technicals.hints(tech, fund_grade=overall, cooling_flag=cooling or "") if tech else []
     return {"RSI": rsi, "RSI_tip": rsi_tip, "RSI區間": zone, "趨勢": tech.get("trend"),
             "距52週高%": tech.get("off_high_pct"), "MACD": tech.get("macd_dir"), "技術評等": tech.get("tech_rating"),
-            "財報日": nr, "財報日_tip": nr_tip, "提示": "；".join(hints)}
+            "財報日": nr, "財報日_tip": nr_tip, "最新財報": tech.get("last_report"),
+            "EPS驚喜%": tech.get("eps_surprise_pct"), "營收驚喜%": tech.get("rev_surprise_pct"),
+            "財報結果": tech.get("result_label"), "提示": "；".join(hints)}
 
 
 def apply_technicals(rows: pd.DataFrame, tech: dict) -> pd.DataFrame:
