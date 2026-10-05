@@ -19,7 +19,7 @@ def temp_data():
             "FUNDAMENTALS_CACHE": data / "cache" / "fundamentals.json", "SCREEN_CACHE": data / "cache" / "screens",
             "MAGIC_PARTIAL": data / "cache" / "magic_partial.csv", "WATCHLIST": data / "user" / "watchlist.txt",
             "POOL_MODE": data / "user" / "universe.txt", "COOLING": data / "user" / "cooling.json",
-            "HISTORY": data / "navellier" / "history.jsonl",
+            "HISTORY": data / "navellier" / "history.jsonl", "ESTIMATES": data / "navellier" / "estimates.jsonl",
         }
         with contextlib.ExitStack() as st:
             for k, v in over.items():

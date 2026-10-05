@@ -33,6 +33,7 @@ WATCHLIST = USER / "watchlist.txt"
 POOL_MODE = USER / "universe.txt"
 COOLING = USER / "cooling.json"
 HISTORY = NAVELLIER / "history.jsonl"
+ESTIMATES = NAVELLIER / "estimates.jsonl"
 
 MANAGERS_CSV = PACKAGE / "superinvestors" / "managers.csv"
 

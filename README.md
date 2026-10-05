@@ -85,8 +85,20 @@ data/state.pkl   網頁目前顯示的各項結果
 
 ## 資料來源與注意事項
 
-- Wikipedia（S&P 500 成分股）、Nasdaq 官方網站 API（Nasdaq 100 成分股，非正式文件化的 API）、Yahoo Finance via yfinance（價格/基本面）、SEC EDGAR 13F、OpenFIGI。
+- Wikipedia（S&P 500 成分股）、Nasdaq 官方網站 API（Nasdaq 100 成分股，非正式文件化的 API）、Yahoo Finance via yfinance（價格/基本面）、TradingView 公開 screener（補充基本面與分析師預估）、SEC EDGAR 13F、OpenFIGI。
 - Yahoo 會限流：失敗時保留舊資料，基本面/財報有續傳快取（約 3 天）。
+- TradingView 用來補足 Yahoo 最新一季的空欄位（營收、淨利、EPS、自由現金流），並提供當下共識分析師預估（無歷史）。
+
+**預估修正（Analyst Earnings Estimate Revision）因子**：
+- 每次執行程式時會存一份預估快照 (`data/navellier/estimates.jsonl`)，累積後用來比較前後快照算預估修正%。
+- 修正 = (最新預估 - 約 28 天前預估) / |舊預估| × 100%；需最少 7 天間隔且同一財報期才有值。
+- 因此新執行後至少需累積 7-28 天才會開始出現修正數值，早期快照不足時該因子為空（不影響評級，MIN_FACTORS 維持 5）。
+
+**技術面指標**（日線，僅供顯示參考，不進評級與篩選）：
+- RSI（相對強弱指數）、趨勢（多頭/回檔/空頭）、距 52 週高（%）、MACD（轉強/轉弱）、技術評等、下次財報日與倒數天數。
+- 同一快照中存儲技術面數據供網頁表格顯示。舊快照格式（無 tech 欄位）與新格式自動相容；技術面抓取失敗時只警告，不中斷評級。
+- 提示邏輯：評級 A + RSI 過熱 → 等回檔；評級 A/B + 趨勢回檔 → 可留意；被建議移除 + 趨勢空頭 → 弱勢確認；財報 ≤7 天 → 財報在 N 天內。
+
 - 啟動 `main.py` 時若看到 `Address already in use`，表示舊行程還占著埠，可用下列指令關掉：`lsof -tiTCP:8765 -sTCP:LISTEN | xargs kill`。
 
 ## 常駐與遠端存取 (macOS + Tailscale)

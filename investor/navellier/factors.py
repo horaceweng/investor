@@ -1,14 +1,17 @@
 """Navellier 基本面因子: 由原始季度序列算出各因子 (純計算, 不連網, 可單獨測試)。
 
-因子 (書上 8 個, 免費資料可算 7 個; 「分析師預估修正」需要付費資料):
+因子 (書上 8 個; 免費資料可算 8 個, 其中「分析師預估修正」需累積快照):
   sales_yoy 營收年增 | margin_exp_yoy_pp 營業利益率年增 | earn_yoy EPS 年增 | earn_accel 盈餘動能 |
-  surprise_avg 財報驚喜 | fcf_yoy 自由現金流年增 | roe_ttm 股東權益報酬率
+  surprise_avg 財報驚喜 | fcf_yoy 自由現金流年增 | roe_ttm 股東權益報酬率 | est_revision 預估修正%
 
 盈餘動能 (earn_accel), 書上原文: 「我們會衡量公司在四季內的變化率。我們所要尋找的是連續幾季逐漸加大的盈餘正向變化。」
 實作在盈餘「成長率」上: 一階導數 = 季增率 g = EPS_t / EPS_{t-1} - 1; 二階導數 = 成長率的變化率
 = (g_最新季 - g_前一季) / g_前一季 (百分比; 例: +347% -> +91% 是 -74%)。分數 = 連續幾季「成長率為正且比前一季更高」
 (0~3), 同分再比二階導數; 需連續 5 季都有資料。(曾誤把「變化率」套在盈餘增加額上, 已移除; 最初的單步版本導數正確,
 但沒有「連續」概念且略過虧損公司。)
+
+預估修正 (est_revision), 由 estimates.py 累積的預估快照計算: 比較最新快照與約 28 天前的快照, 計算下季 EPS 預估修正%.
+需最少 7 天的間隔, 同一財報期才能比較; 沒有足夠歷史或預估改期時無值。
 
 資料處理原則:
 - 位置運算 ([-1] vs [-5]) 一律在「保留空值」的原序列上做: yfinance 的季度欄位是真實連續的財季, 中間缺一季就必須得到 NaN,
@@ -20,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 FACTORS = ["sales_yoy", "margin_exp_yoy_pp", "earn_yoy", "earn_accel",
-           "surprise_avg", "fcf_yoy", "roe_ttm"]
+           "surprise_avg", "fcf_yoy", "roe_ttm", "est_revision"]
 
 
 def ok(v):

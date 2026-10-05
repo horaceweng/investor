@@ -2,6 +2,8 @@
 
 快取存的是「原始季度序列」而非算好的因子 (data/cache/fundamentals.json), 所以公式改版時 factors.derive() 直接離線重算,
 不必重抓 (只有原始欄位改變才需要把 CACHE_VERSION +1)。被 Yahoo 限流時已抓到的部分會存檔, 再按一次更新會接續。
+
+最新一季空欄位用 TradingView 補值 (逐季歷史), 記錄在 raw 資料的 _src: {欄位: "tv", ...}。
 """
 import threading
 import time
@@ -14,13 +16,14 @@ from yfinance.exceptions import YFRateLimitError
 
 from investor import paths
 from investor.data_sources.yahoo import require_enough, retry
+from investor.data_sources import tradingview
 from investor.fileio import read_json, write_json
-from investor.navellier import grading
+from investor.navellier import grading, estimates
 from investor.navellier.factors import derive
 
 warnings.filterwarnings("ignore")
 
-CACHE_VERSION = 4            # 原始欄位改變時 +1, 舊快取視為過期並重抓
+CACHE_VERSION = 5            # 原始欄位改變時 +1, 舊快取視為過期並重抓
 CACHE_TTL = 3 * 24 * 3600   # 財報一季才更新一次, 單檔結果快取 3 天; 也讓被限流中斷後可接續
 
 
@@ -127,16 +130,117 @@ def _fetch_all(tickers, notes):
     return fund
 
 
+def _fill_tv_gaps(fund, tickers):
+    """用 TradingView 補 Yahoo 最新季度的空值: _rev/_ni/_eps/_fcf。
+
+    條件: 對 4 個序列中, Yahoo 最新值為 None (或序列不足 5 個有效值) 且 TV 對應 _h 序列至少 5 個有效值者,
+    以 TV 序列整段取代 (TV 最新在前, 反轉後取最後 6 個)。_opinc、_eq 不動。
+    TV 抓取失敗時只警告, 不影響既有 Yahoo 結果。
+    """
+    try:
+        tv_data = tradingview.fetch_fundamentals(tickers)
+    except Exception as e:
+        warnings.warn(f"TradingView 補值失敗: {e}")
+        return
+
+    if not tv_data:
+        return
+
+    # 對應關係: Yahoo key -> TV _h key
+    map_to_tv = {
+        "_rev": "total_revenue_fq_h",
+        "_ni": "net_income_fq_h",
+        "_eps": "earnings_per_share_diluted_fq_h",
+        "_fcf": "free_cash_flow_fq_h",
+    }
+
+    cache = _load_cache()
+    for t in tickers:
+        if t not in fund:
+            continue
+
+        raw_data = fund[t]
+        sources = {}
+
+        for yahoo_key, tv_key in map_to_tv.items():
+            yahoo_seq = raw_data.get(yahoo_key)
+            tv_seq = tv_data.get(t, {}).get(tv_key)
+
+            # 判斷是否需要用 TV 取代: Yahoo 最新值為 None 或序列不足 5 個有效值
+            # 且 TV 至少有 5 個有效值
+            need_tv = False
+            if tv_seq is not None:
+                tv_valid = [v for v in tv_seq if v is not None]
+                if len(tv_valid) >= 5:
+                    if yahoo_seq is None:
+                        need_tv = True
+                    else:
+                        yahoo_valid = [v for v in yahoo_seq if v is not None]
+                        if len(yahoo_valid) < 5 or (len(yahoo_seq) > 0 and yahoo_seq[-1] is None):
+                            need_tv = True
+
+            if need_tv:
+                # TV 最新在前, 取前 6 個(最新 6 季), 反轉成舊→新格式
+                raw_data[yahoo_key] = list(reversed(tv_seq[:6]))
+                sources[yahoo_key] = "tv"
+
+        # 保存來源標記
+        if sources:
+            raw_data["_src"] = sources
+
+        # 同時嘗試抓 TV 的最新季驚喜
+        eps_surprise = tv_data.get(t, {}).get("eps_surprise_percent_fq")
+        rev_surprise = tv_data.get(t, {}).get("revenue_surprise_percent_fq")
+        if eps_surprise is not None:
+            raw_data["eps_surprise_last_pct"] = eps_surprise
+        if rev_surprise is not None:
+            raw_data["rev_surprise_last_pct"] = rev_surprise
+
+        # 更新快取中該檔的 raw 資料
+        if t in cache:
+            cache[t]["data"] = raw_data
+
+    _save_cache(cache)
+
+
 def compute(ab_results=None, tickers=None):
     """抓(或讀快取)基本面並評級。ab_results: alpha_beta.compute() 的結果; 給了才算「30% 基本面 + 70% 量化」綜合評級。"""
     if not tickers:
         raise ValueError("tickers 不能是空的")
     notes = {}
     fund = _fetch_all(tickers, notes)
+
+    # 用 TradingView 補 Yahoo 最新季度的空值
+    _fill_tv_gaps(fund, tickers)
+
+    # 重新 derive (以應用 TV 補的值)
+    for t in tickers:
+        fund[t] = derive(fund[t])
+
+    # 存預估快照
+    try:
+        estimates.snapshot(tickers)
+    except Exception as e:
+        warnings.warn(f"預估快照失敗: {e}")
+
+    # 計算預估修正與取得技術面資料
+    technicals_data = {}
+    try:
+        snapshots = estimates.load_snapshots()
+        revisions = estimates.compute_revisions(snapshots)
+        # 併進各檔 fund dict
+        for t in tickers:
+            if t in revisions:
+                fund[t].update(revisions[t])
+
+        # 取得技術面資料
+        technicals_data = estimates.get_technicals()
+    except Exception as e:
+        warnings.warn(f"預估修正計算失敗: {e}")
+
     require_enough(sum(1 for t in tickers if fund[t].get("n_q")), len(tickers),
                    "Navellier 基本面", "既有報告", min_ratio=0.5)
     scores, fund_grade, combined = grading.grade(fund, tickers, ab_results)
     return {"fundamentals": fund, "factor_quintiles": scores, "fund_grade": fund_grade,
             "combined_30_70": combined, "notes": notes,
-            "unavailable": ["analyst_earnings_revisions: needs Bloomberg/FactSet/paid API "
-                            "(no historical estimate-revision series in free data)"]}
+            "unavailable": [], "technicals": technicals_data}

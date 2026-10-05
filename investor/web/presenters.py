@@ -4,7 +4,7 @@ import pandas as pd
 # 因子明細表的欄位 (鍵, 標題); 鍵對應 navellier.fundamentals 的因子
 FACTOR_LABELS = [("sales_yoy", "營收年增%"), ("margin_exp_yoy_pp", "營業利益率年增(pp)"), ("earn_yoy", "EPS年增%"),
                  ("earn_accel_streak", "盈餘動能(連續季數)"), ("earn_accel_pct", "盈餘動能(成長率變化%)"), ("surprise_avg", "財報驚喜均值%"),
-                 ("fcf_yoy", "FCF年增%"), ("roe_ttm", "ROE(TTM)%")]
+                 ("fcf_yoy", "FCF年增%"), ("roe_ttm", "ROE(TTM)%"), ("est_revision", "預估修正%")]
 
 
 def navellier_rows(r: dict, mine: set) -> pd.DataFrame:
@@ -17,13 +17,40 @@ def navellier_rows(r: dict, mine: set) -> pd.DataFrame:
                  else "✅ 正常" if cool.startswith("✅") else "—")
         ok = c.get("eligible")   # 資料不足 52 週者, 統計上不可靠的數字一律不顯示
         hist = " → ".join(f"{x:.2f}" for x in ser[-6:]) if ok else ""
+
+        # 技術面資料
+        rsi = c.get("rsi")
+        rsi_tip = ""
+        if rsi is not None:
+            if c.get("rsi_zone") == "過熱":
+                rsi_tip = f"RSI {rsi:.1f} (過熱, >=70)"
+            elif c.get("rsi_zone") == "超賣":
+                rsi_tip = f"RSI {rsi:.1f} (超賣, <=30)"
+            else:
+                rsi_tip = f"RSI {rsi:.1f}"
+
+        days_to_report = c.get("days_to_report")
+        report_date_tip = ""
+        if c.get("next_report"):
+            if days_to_report is not None:
+                report_date_tip = f"{c['next_report']} (倒數 {days_to_report} 天)"
+            else:
+                report_date_tip = c['next_report']
+
+        hints_str = "；".join(c.get("tech_hints", [])) if c.get("tech_hints") else ""
+
         rows.append({"代號": t, "公司": r["names"].get(t, ""), "公司_tip": r["names"].get(t, ""), "板塊": r["sectors"].get(t, ""), "清單": "★" if t in mine else "", "綜合評級": c.get("overall"), "綜合分": c.get("combined"),
                      "基本面評級": c.get("fund_grade"),
                      "基本面評級_tip": f"基本面均分 {c['fund_avg']} (1–5，5 最好)" if c.get("fund_avg") else "",
                      "量化評級_tip": f"量化五分位 {c['quant_quintile']}/5" if c.get("quant_quintile") else "", "Alpha/SD": c.get("alpha_over_sd") if ok else None,
                      "量化評級": c.get("nav_grade"), "Beta5Y": c.get("beta_5y") if ok else None,
                      "Alpha5Y%": c.get("alpha_ann_5y_pct") if ok else None,
-                     "動能": short, "動能_tip": cool, "量化分位%": c["nav_pct"] * 100 if c.get("nav_pct") is not None else None, "近期分數": hist, "近期分數_tip": hist})
+                     "動能": short, "動能_tip": cool, "量化分位%": c["nav_pct"] * 100 if c.get("nav_pct") is not None else None, "近期分數": hist, "近期分數_tip": hist,
+                     # 技術面欄位
+                     "RSI": rsi, "RSI_tip": rsi_tip, "RSI區間": c.get("rsi_zone"),
+                     "趨勢": c.get("trend"), "距52週高%": c.get("off_high_pct"), "MACD": c.get("macd_dir"),
+                     "技術評等": c.get("tech_rating"), "財報日": c.get("next_report"), "財報日_tip": report_date_tip,
+                     "提示": hints_str})
     df = pd.DataFrame(rows).sort_values("綜合分", ascending=False, na_position="last").reset_index(drop=True)
     return df
 
@@ -69,6 +96,10 @@ def navellier_factors(r: dict) -> pd.DataFrame:
                 chg = (f"成長率由 {gp:+.0f}% 變為 {gn:+.0f}%，變化率 = ({gn:.0f}% − {gp:.0f}%) ÷ {gp:.0f}% = {v:+.0f}%；"
                        if gp is not None and gn is not None and gp > 0 else "")
                 tip = chg + gtxt + tip
+            elif key == "est_revision":
+                days = fd.get("est_days")
+                if days is not None:
+                    tip = f"相隔 {days} 天的快照比較；" + tip
             if tip:
                 row[key + "_tip"] = tip
         frows.append(row)

@@ -70,17 +70,49 @@ def run(tickers=None, verbose=False, mode=None):
     cool = settings.load_cooling()
     pct = pd.Series({t: ab[t]["nav_score"] for t in tickers if ab.get(t, {}).get("eligible")},
                     dtype=float).rank(pct=True).to_dict()      # 分位只在「資料足夠」的股票之間算
+
+    # 匯入技術面模組以計算提示
+    from investor.navellier import technicals as tech_module
+
     report = {}
     for t in tickers:
         entry = dict(fd["combined_30_70"].get(t, {"overall": "N/A"}))
         a = ab.get(t, {})
+        cooling_str = cooling_flag(pct.get(t), cool["warn"], cool["remove"]) if a.get("eligible") else "N/A（資料不足 52 週，不評級）"
         entry.update({
             "beta_5y": a.get("beta_5y"), "alpha_ann_5y_pct": a.get("alpha_ann_5y"),
             "nav_grade": a.get("nav_grade", "N/A"), "eligible": a.get("eligible", False),
             "n_weeks": a.get("n_weeks"), "last_close": a.get("last_close"),
             "nav_pct": pct.get(t),
-            "cooling": cooling_flag(pct.get(t), cool["warn"], cool["remove"]) if a.get("eligible") else "N/A（資料不足 52 週，不評級）",
+            "cooling": cooling_str,
         })
+
+        # 加入技術面欄位
+        tech_data = fd.get("technicals", {}).get(t, {})
+        if tech_data:
+            entry.update({
+                "rsi": tech_data.get("rsi"),
+                "rsi_zone": tech_data.get("rsi_zone"),
+                "trend": tech_data.get("trend"),
+                "off_high_pct": tech_data.get("off_high_pct"),
+                "macd_dir": tech_data.get("macd_dir"),
+                "tech_rating": tech_data.get("tech_rating"),
+                "next_report": tech_data.get("next_report"),
+                "days_to_report": tech_data.get("days_to_report"),
+                "report_soon": tech_data.get("report_soon"),
+            })
+
+            # 計算提示 (使用 overall 評級與 cooling 字串)
+            hints_list = tech_module.hints(tech_data, fund_grade=entry.get("overall"), cooling_flag=cooling_str)
+            entry["tech_hints"] = hints_list
+        else:
+            # 沒有技術面資料時留空
+            entry.update({
+                "rsi": None, "rsi_zone": None, "trend": None, "off_high_pct": None,
+                "macd_dir": None, "tech_rating": None, "next_report": None,
+                "days_to_report": None, "report_soon": False, "tech_hints": [],
+            })
+
         report[t] = entry
 
     today = datetime.now().astimezone().strftime("%Y-%m-%d")

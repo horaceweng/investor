@@ -142,6 +142,13 @@ def _navellier_columns(mode):
               ("基本面評級", "基本面", "text"), ("量化評級", "量化", "text"),
               ("Alpha/SD", "Alpha/SD", "num"), ("量化分位%", "量化分位", "plain"), ("Beta5Y", "Beta(5Y)", "num"),
               ("Alpha5Y%", "Alpha(5Y)", "plain"), ("動能", "動能", "text")]
+
+    # 技術面欄位 (日線, 僅供參考, 不影響評級)
+    tech_cols = [("RSI", "RSI", "num"), ("RSI區間", "RSI區間", "text"), ("趨勢", "趨勢", "tone"), ("距52週高%", "距高%", "num"),
+                 ("MACD", "MACD", "tone"), ("技術評等", "技術評等", "tone"), ("財報日", "財報日", "text"),
+                 ("提示", "提示", "text")]
+    ncols += tech_cols
+
     ntail = [("近期分數", "近期 Alpha/SD (舊→新)", "series")]   # 長文字放最後, 不擠掉股價表現欄
     fcols = [("代號", "代號", "ticker")] + [(k, lab, "num") for k, lab in FACTOR_LABELS]
     return ncols, ntail, fcols

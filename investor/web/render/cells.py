@@ -6,6 +6,10 @@ import pandas as pd
 from investor.data_sources.prices import PERF
 
 
+TONE_UP = {"多頭", "轉強", "買進", "強力買進"}
+TONE_DN = {"空頭", "轉弱", "賣出", "強力賣出"}
+
+
 def esc(x):
     return html.escape(str(x))
 
@@ -22,6 +26,9 @@ def cell(kind, v, extra=""):
         return f'<td class="co" data-v="{esc(v)}"{extra}>{esc(v)}</td>'
     if kind == "series":
         return f'<td class="sr" data-v="{esc(v)}"{extra}>{esc(v)}</td>'
+    if kind == "tone":   # 文字依漲跌語意上色 (紅漲綠跌由 CSS 的 up/dn 變數決定)
+        cls = "up" if v in TONE_UP else "dn" if v in TONE_DN else ""
+        return f'<td class="tx {cls}" data-v="{esc(v)}"{extra}>{esc(v)}</td>'
     if kind == "text":
         return f'<td class="tx" data-v="{esc(v)}"{extra}>{esc(v)}</td>'
     v = float(v) + 0.0   # 把 -0.0 正規化為 0.0, 避免顯示 -0.00
@@ -40,10 +47,10 @@ def cell(kind, v, extra=""):
 def table(df, cols, perf, with_perf=True, tail=(), compact=False):
     """cols: [(欄位名, 標題, kind)]; 自動附加 1M/3M/6M/1Y 欄。"""
     head = "<th>#</th>" + "".join(
-        f'<th data-k="{"t" if k in ("text", "ticker", "series", "co") else "n"}">{esc(lab)}</th>' for _, lab, k in cols)
+        f'<th data-k="{"t" if k in ("text", "tone", "ticker", "series", "co") else "n"}">{esc(lab)}</th>' for _, lab, k in cols)
     if with_perf:
         head += "".join(f'<th data-k="n">{p}</th>' for p in PERF)
-    head += "".join(f'<th data-k="{"t" if k in ("text", "ticker", "series", "co") else "n"}">{esc(lab)}</th>' for _, lab, k in tail)
+    head += "".join(f'<th data-k="{"t" if k in ("text", "tone", "ticker", "series", "co") else "n"}">{esc(lab)}</th>' for _, lab, k in tail)
     rows = []
     for i, r in enumerate(df.to_dict("records"), 1):
         tds = f'<td class="n rk" data-v="{i}">{i}</td>'
