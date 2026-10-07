@@ -6,6 +6,7 @@
 """
 from investor.navellier.factors import FACTORS, factor_value, quintiles
 
+MIN_GROUP = 5                            # 分組評級時, 組內至少這麼多檔才評 (見 navellier.groups)
 MIN_FACTORS = 5                          # 可計算因子少於此數者不評級 (N/A)
 FUND_WEIGHT, QUANT_WEIGHT = 0.30, 0.70   # Navellier 公開的 30/70 比例
 
@@ -15,17 +16,31 @@ def letter(score: float) -> str:
     return "ABCDE"[min(int((5 - score) * 5 / 4), 4)]
 
 
-def grade(fund: dict, tickers, ab_results=None):
+def _buckets(tickers, groups):
+    """-> {分組: [代號...]}; groups=None 時全部放同一組 (None), 與不分組完全相同。"""
+    b = {}
+    for t in tickers:
+        b.setdefault(groups.get(t) if groups else None, []).append(t)
+    return b
+
+
+def grade(fund: dict, tickers, ab_results=None, groups=None):
     """fund: {ticker: 因子 dict}; ab_results: alpha_beta.compute() 的結果 (含 nav_score / eligible), 給了才算綜合評級。
+    groups: {代號: 分類名}; 給了就在「各分類內」分五等 (組內可評級者少於 MIN_GROUP 檔的分類不評等級, 標 small_group)。
     回傳 (factor_quintiles, fund_grade, combined)。"""
     n_factors = {t: sum(1 for f in FACTORS if factor_value(fund[t], f) is not None) for t in tickers}
     scored_tickers = [t for t in tickers if n_factors[t] >= MIN_FACTORS]
+    buckets = _buckets(scored_tickers, groups)
+    too_small = {t for g, ts in buckets.items() if groups and len(ts) < MIN_GROUP for t in ts}
     scores = {}
-    for f in FACTORS:
-        vals = [(t, factor_value(fund[t], f)) for t in scored_tickers if factor_value(fund[t], f) is not None]
-        if vals:
-            for t, q in quintiles(vals).items():
-                scores.setdefault(t, {})[f] = q       # 1..5, higher=better
+    for g, ts in buckets.items():
+        if groups and len(ts) < MIN_GROUP:
+            continue                                  # 組太小: 五分位沒有意義, 不評
+        for f in FACTORS:
+            vals = [(t, factor_value(fund[t], f)) for t in ts if factor_value(fund[t], f) is not None]
+            if vals:
+                for t, q in quintiles(vals).items():
+                    scores.setdefault(t, {})[f] = q       # 1..5, higher=better
 
     fund_grade = {}
     for t in tickers:
@@ -35,14 +50,20 @@ def grade(fund: dict, tickers, ab_results=None):
             fund_grade[t] = {"avg": round(avg, 2), "n_factors": len(sc), "grade": letter(avg)}
         else:
             fund_grade[t] = {"avg": None, "n_factors": n_factors[t], "grade": "N/A"}
+            if t in too_small:
+                fund_grade[t]["small_group"] = True
 
     combined = {}
     if ab_results is not None:
         nav_q = {t: v["nav_score"] for t, v in ab_results.items()
                  if t in fund_grade and fund_grade[t]["grade"] != "N/A" and v.get("eligible", True)}
-        sv = sorted(nav_q.items(), key=lambda x: x[1])
-        nq = len(sv)
-        qscore = {t: min(int(i * 5 / max(nq, 1)), 4) + 1 for i, (t, _) in enumerate(sv)}
+        qscore = {}
+        for g, ts in _buckets(list(nav_q), groups).items():
+            if groups and len(ts) < MIN_GROUP:
+                continue                              # 組內有 52 週資料的股票太少: 量化分位沒有意義, 不給綜合評級
+            sv = sorted(((t, nav_q[t]) for t in ts), key=lambda x: x[1])
+            nq = len(sv)
+            qscore.update({t: min(int(i * 5 / max(nq, 1)), 4) + 1 for i, (t, _) in enumerate(sv)})
         for t in tickers:
             fg = fund_grade[t]
             alpha_over_sd = ab_results.get(t, {}).get("nav_score")

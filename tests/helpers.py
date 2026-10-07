@@ -18,7 +18,7 @@ def temp_data():
             "STATE_FILE": data / "state.pkl", "SEC_CACHE": data / "cache" / "13f",
             "FUNDAMENTALS_CACHE": data / "cache" / "fundamentals.json", "SCREEN_CACHE": data / "cache" / "screens",
             "MAGIC_PARTIAL": data / "cache" / "magic_partial.csv", "WATCHLIST": data / "user" / "watchlist.txt",
-            "POOL_MODE": data / "user" / "universe.txt", "COOLING": data / "user" / "cooling.json",
+            "POOL_MODE": data / "user" / "universe.txt", "COOLING": data / "user" / "cooling.json", "GROUPS": data / "user" / "groups.json",
             "HISTORY": data / "navellier" / "history.jsonl", "ESTIMATES": data / "navellier" / "estimates.jsonl",
         }
         with contextlib.ExitStack() as st:

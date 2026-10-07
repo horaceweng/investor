@@ -203,8 +203,9 @@ def _fill_tv_gaps(fund, tickers):
     _save_cache(cache)
 
 
-def compute(ab_results=None, tickers=None):
-    """抓(或讀快取)基本面並評級。ab_results: alpha_beta.compute() 的結果; 給了才算「30% 基本面 + 70% 量化」綜合評級。"""
+def compute(ab_results=None, tickers=None, groups=None):
+    """抓(或讀快取)基本面並評級。ab_results: alpha_beta.compute() 的結果; 給了才算「30% 基本面 + 70% 量化」綜合評級。
+    groups: {代號: 分類名}; 給了就在各分類內相對排名 (見 grading.grade)。"""
     if not tickers:
         raise ValueError("tickers 不能是空的")
     notes = {}
@@ -240,7 +241,7 @@ def compute(ab_results=None, tickers=None):
 
     require_enough(sum(1 for t in tickers if fund[t].get("n_q")), len(tickers),
                    "Navellier 基本面", "既有報告", min_ratio=0.5)
-    scores, fund_grade, combined = grading.grade(fund, tickers, ab_results)
+    scores, fund_grade, combined = grading.grade(fund, tickers, ab_results, groups)
     return {"fundamentals": fund, "factor_quintiles": scores, "fund_grade": fund_grade,
             "combined_30_70": combined, "notes": notes,
             "unavailable": [], "technicals": technicals_data}

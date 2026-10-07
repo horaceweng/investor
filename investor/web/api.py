@@ -2,7 +2,7 @@
 
 輸入不合法時丟 ValueError (訊息會原樣回給前端)。
 """
-from investor.navellier import settings
+from investor.navellier import groups, settings
 from investor.web import jobs, steps
 
 
@@ -17,6 +17,13 @@ def watchlist_set(body: dict):
 def watchlist_toggle(body: dict):
     tickers, member = settings.toggle_watchlist(str(body.get("ticker", "")))
     return 200, {"tickers": tickers, "member": member}
+
+
+def groups_set(body: dict):
+    """儲存自訂觀察清單的分類 (文字格式: 每行「分類名: 代號 代號…」); 存好後背景重算評級 (組內排名)。"""
+    parsed = groups.parse_text(str(body.get("text", "")))
+    groups.save(parsed)
+    return 200, {"groups": len(parsed), "started": jobs.start_job("nav")}
 
 
 def cooling_set(body: dict):
@@ -45,6 +52,7 @@ def update(task: str):
 JSON_POST = {
     "/api/watchlist": (watchlist_set, 500_000),         # 只是防止異常大的請求, 不限制檔數
     "/api/watchlist/toggle": (watchlist_toggle, 500_000),
+    "/api/groups": (groups_set, 200_000),
     "/api/cooling": (cooling_set, 1000),
     "/api/universe": (universe_set, 1000),
 }

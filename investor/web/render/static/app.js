@@ -28,7 +28,7 @@ $('#cbtn').onclick=()=>{const m=root.dataset.color==='tw'?'us':'tw';store.set('c
 let wasRunning=false,timer=null;
 function render(s){
   const msg=$('#msg');
-  $$('[data-task],#wlsave,#cbsave').forEach(b=>b.disabled=s.running);
+  $$('[data-task],#wlsave,#cbsave,#grsave').forEach(b=>b.disabled=s.running);
   if(s.running){const sec=Math.max(0,Math.round(Date.now()/1000-s.started));
     msg.className='run';msg.innerHTML='<span class="spin"></span>'+s.label+' — '+s.step+'（已 '+sec+' 秒）'}
   else if(s.error){msg.className='err';msg.textContent='上次更新有錯誤: '+s.error}
@@ -115,6 +115,22 @@ if(wled){
     clearTimeout(timer);poll()};
   window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue=''}});
   draw();
+}
+
+// ── 分類編輯 (只在自訂觀察清單) ──
+const gred=$('#gred');
+if(gred){
+  const gmsg=(m,err)=>{const e=$('#grmsg');e.textContent=m||'';e.style.color=err?'var(--red)':'var(--mut)'};
+  const t0=$('#grtext').value;
+  $('#gredit').onclick=()=>{gred.hidden=false;$('#grbar').hidden=true;$('#grtext').focus()};
+  $('#grcancel').onclick=()=>{if($('#grtext').value!==t0&&!confirm('放棄未儲存的變更?'))return;$('#grtext').value=t0;gmsg('');gred.hidden=true;$('#grbar').hidden=false};
+  $('#grsave').onclick=async()=>{
+    gmsg('儲存中…');
+    const r=await fetch('/api/groups',{method:'POST',headers:JH,body:JSON.stringify({text:$('#grtext').value})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){gmsg(j.error||'儲存失敗',true);return}
+    if(!j.started)alert('已有更新在進行中，分類已儲存，稍後請按「更新評級」重算');
+    gmsg('');clearTimeout(timer);poll()};
 }
 
 // ── 大股票池表格: 點「清單」欄的 ☆/★ 加入/移出自訂觀察清單 ──

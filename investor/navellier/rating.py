@@ -28,9 +28,21 @@ import pandas as pd
 from investor import paths
 from investor import universe
 from investor.fileio import atomic_write
-from investor.navellier import alpha_beta, fundamentals, history, settings
+from investor.navellier import alpha_beta, fundamentals, grading, groups as groups_mod, history, settings
+from investor.navellier import technicals as tech_module
 
 BACKFILL_WEEKS = 8
+
+
+def _regrade_quant(ab, amap):
+    """分組時, 量化評級 (nav_grade) 改為組內五分位; 組內可評級者少於 MIN_GROUP 檔的組不評 (N/A)。就地修改 ab。"""
+    if not amap:
+        return
+    labels = "ABCDE"
+    for g, ts in grading._buckets([t for t, v in ab.items() if v.get("eligible") and t in amap], amap).items():
+        ranked = sorted(ts, key=lambda t: ab[t]["nav_score"], reverse=True)
+        for i, t in enumerate(ranked):
+            ab[t]["nav_grade"] = labels[min(i * 5 // len(ranked), 4)] if len(ranked) >= grading.MIN_GROUP else "N/A"
 
 
 def cooling_flag(pct, warn, remove):
@@ -58,7 +70,9 @@ def run(tickers=None, verbose=False, mode=None):
         else:
             tickers = settings.load_watchlist()
     ab, missing, wk_hist = alpha_beta.compute(tickers, verbose=verbose, history_weeks=BACKFILL_WEEKS)
-    fd = fundamentals.compute(ab, tickers)
+    amap, group_order = groups_mod.active(mode, tickers)       # 自訂清單有分類時, 評級與動能分位都在「組內」比
+    _regrade_quant(ab, amap)
+    fd = fundamentals.compute(ab, tickers, amap)
 
     cutoff = str(alpha_beta.complete_week_cutoff())
     recs = history.merge_history(history.load_history(), wk_hist, cutoff)
@@ -68,17 +82,18 @@ def run(tickers=None, verbose=False, mode=None):
     series = {t: [recs[w]["scores"][t] for w in weeks if t in recs[w]["scores"]] for t in tickers}
 
     cool = settings.load_cooling()
-    pct = pd.Series({t: ab[t]["nav_score"] for t in tickers if ab.get(t, {}).get("eligible")},
-                    dtype=float).rank(pct=True).to_dict()      # 分位只在「資料足夠」的股票之間算
-
-    # 匯入技術面模組以計算提示
-    from investor.navellier import technicals as tech_module
-
+    pct = {}                                                   # 量化分數的分位 (0~1); 分組時只在同組「資料足夠」的股票之間算
+    for g, ts in grading._buckets([t for t in tickers if ab.get(t, {}).get("eligible")], amap).items():
+        if not amap or len(ts) >= grading.MIN_GROUP:
+            pct.update(pd.Series({t: ab[t]["nav_score"] for t in ts}, dtype=float).rank(pct=True).to_dict())
     report = {}
     for t in tickers:
         entry = dict(fd["combined_30_70"].get(t, {"overall": "N/A"}))
         a = ab.get(t, {})
-        cooling_str = cooling_flag(pct.get(t), cool["warn"], cool["remove"]) if a.get("eligible") else "N/A（資料不足 52 週，不評級）"
+        small = bool(amap) and a.get("eligible") and t not in pct
+        cooling_str = ("N/A（資料不足 52 週，不評級）" if not a.get("eligible") else
+                       f"N/A（「{amap[t]}」可評級的股票少於 {grading.MIN_GROUP} 檔，不評等級）" if small else
+                       cooling_flag(pct.get(t), cool["warn"], cool["remove"]))
         entry.update({
             "beta_5y": a.get("beta_5y"), "alpha_ann_5y_pct": a.get("alpha_ann_5y"),
             "nav_grade": a.get("nav_grade", "N/A"), "eligible": a.get("eligible", False),
@@ -86,6 +101,8 @@ def run(tickers=None, verbose=False, mode=None):
             "nav_pct": pct.get(t),
             "cooling": cooling_str,
         })
+        if amap:
+            entry["group"] = amap[t]
 
         # 加入技術面欄位
         tech_data = fd.get("technicals", {}).get(t, {})
@@ -123,7 +140,7 @@ def run(tickers=None, verbose=False, mode=None):
     atomic_write(paths.NAVELLIER / f"report_{today}_{mode}.json", text)
     atomic_write(paths.NAVELLIER / f"latest_report_{mode}.json", text)
 
-    return {"asof": cutoff, "tickers": tickers, "mode": mode, "names": names, "sectors": sectors, "cooling": cool, "report": report, "series": series,
+    return {"asof": cutoff, "tickers": tickers, "mode": mode, "groups": amap, "group_order": group_order, "names": names, "sectors": sectors, "cooling": cool, "report": report, "series": series,
             "fundamentals": fd["fundamentals"], "factor_quintiles": fd["factor_quintiles"],
             "missing": missing, "notes": fd["notes"], "unavailable": fd["unavailable"]}
 

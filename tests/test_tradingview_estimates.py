@@ -37,7 +37,7 @@ class TradingViewFetch(unittest.TestCase):
             "free_cash_flow_fq_h": [[1e8, 2e8, 3e8, 4e8, 5e8, 6e8], [1e9, 2e9, 3e9, 4e9, 5e9, 6e9]],
         })
 
-        with mock.patch("tradingview_screener.Query") as mock_query:
+        with mock.patch("investor.data_sources.tradingview.Query") as mock_query:
             mock_instance = mock.MagicMock()
             mock_instance.get_scanner_data.return_value = (2, mock_df)
             mock_query.return_value.set_markets.return_value.select.return_value.where.return_value.limit.return_value = mock_instance
@@ -48,6 +48,20 @@ class TradingViewFetch(unittest.TestCase):
             self.assertIn("AAPL", result)
             self.assertIsNotNone(result["BRK-B"]["total_revenue_fq_h"])
             self.assertIsNotNone(result["AAPL"]["total_revenue_fq_h"])
+
+
+class TradingViewDepositaryReceipts(unittest.TestCase):
+    """ADR (type='dr': TSM、ARM、BABA、NVO…) 不能被過濾掉 (曾只留 type='stock', 這些股票沒有預估與技術面)。"""
+
+    def test_dr_kept_and_other_types_dropped(self):
+        import pandas as pd
+        df = pd.DataFrame({"name": ["TSM", "AAPL", "XYZ"], "type": ["dr", "stock", "fund"],
+                           "market_cap_basic": [1e12, 3e12, None], "RSI": [55.0, 60.0, 40.0]})
+        with mock.patch("investor.data_sources.tradingview.Query") as q:
+            q.return_value.set_markets.return_value.select.return_value.where.return_value.limit.return_value.get_scanner_data.return_value = (3, df)
+            out = tradingview.fetch(["TSM", "AAPL", "XYZ"], ["RSI"])
+        self.assertEqual(set(out), {"TSM", "AAPL"})
+        self.assertEqual(out["TSM"]["RSI"], 55.0)
 
 
 class EstimateSnapshot(unittest.TestCase):

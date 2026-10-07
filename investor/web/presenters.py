@@ -50,6 +50,46 @@ def apply_technicals(rows: pd.DataFrame, tech: dict) -> pd.DataFrame:
     return out
 
 
+def _num(df, col):
+    if col not in df.columns:
+        return []
+    return [float(v) for v in df[col] if v is not None and v == v]
+
+
+def _med(vals):
+    return float(pd.Series(vals).median()) if vals else None
+
+
+def tech_summary(g: pd.DataFrame) -> str:
+    """一個分類的技術面摘要 (主表分組標題用): 檔數、可評級數、RSI 中位、多頭占比、距 52 週高中位。"""
+    parts = [f"{len(g)} 檔"]
+    rated = int(sum(1 for v in g.get("綜合評級", []) if v and v != "N/A"))
+    parts.append(f"{rated} 檔有評級" if rated else "未評等級（組內可評級者不足）")
+    rsi, off = _num(g, "RSI"), _num(g, "距52週高%")
+    tr = [v for v in g.get("趨勢", []) if v]
+    if rsi:
+        parts.append(f"RSI 中位 {_med(rsi):.0f}")
+    if tr:
+        parts.append(f"多頭 {sum(1 for v in tr if v == '多頭')}/{len(tr)}")
+    if off:
+        parts.append(f"距52週高中位 {_med(off):.0f}%")
+    return "；".join(parts)
+
+
+def fund_summary(g: pd.DataFrame) -> str:
+    """一個分類的基本面摘要 (因子明細分組標題用): 營收年增、ROE、預估修正中位, 最新季 beat 占比。"""
+    parts = [f"{len(g)} 檔"]
+    for col, lab, fmt in (("sales_yoy", "營收年增中位", "{:+.0f}%"), ("roe_ttm", "ROE 中位", "{:.0f}%"),
+                          ("est_revision", "預估修正中位", "{:+.1f}%")):
+        m = _med(_num(g, col))
+        if m is not None:
+            parts.append(f"{lab} " + fmt.format(m))
+    res = [v for v in g.get("財報結果", []) if v]
+    if res:
+        parts.append(f"最新季雙 beat {sum(1 for v in res if v == '雙 beat')}/{len(res)}")
+    return "；".join(parts)
+
+
 def navellier_rows(r: dict, mine: set) -> pd.DataFrame:
     """r: rating.run() 的結果; mine: 自訂觀察清單 (用來標 ★)。依綜合分由高到低排序。"""
     rows = []
@@ -62,7 +102,7 @@ def navellier_rows(r: dict, mine: set) -> pd.DataFrame:
         hist = " → ".join(f"{x:.2f}" for x in ser[-6:]) if ok else ""
 
         tc = tech_cells(c, c.get("overall"), c.get("cooling"))
-        rows.append({"代號": t, "公司": r["names"].get(t, ""), "公司_tip": r["names"].get(t, ""), "板塊": r["sectors"].get(t, ""), "清單": "★" if t in mine else "", "綜合評級": c.get("overall"), "綜合分": c.get("combined"),
+        rows.append({"代號": t, "分類": c.get("group"), "公司": r["names"].get(t, ""), "公司_tip": r["names"].get(t, ""), "板塊": r["sectors"].get(t, ""), "清單": "★" if t in mine else "", "綜合評級": c.get("overall"), "綜合分": c.get("combined"),
                      "基本面評級": c.get("fund_grade"),
                      "基本面評級_tip": f"基本面均分 {c['fund_avg']} (1–5，5 最好)" if c.get("fund_avg") else "",
                      "量化評級_tip": f"量化五分位 {c['quant_quintile']}/5" if c.get("quant_quintile") else "", "Alpha/SD": c.get("alpha_over_sd") if ok else None,
@@ -81,7 +121,7 @@ def navellier_factors(r: dict) -> pd.DataFrame:
     STATE = {"earn_yoy": "earn_state", "fcf_yoy": "fcf_state"}                         # 虧損/轉盈狀態欄位
     ACCEL = ("earn_accel_streak", "earn_accel_pct")
     for t in r["tickers"]:
-        row, fd = {"代號": t}, r["fundamentals"][t]
+        row, fd = {"代號": t, "分類": (r["report"].get(t) or {}).get("group")}, r["fundamentals"][t]
         gr = fd.get("earn_growth_pct")
         gtxt = "近 4 季 EPS 季增率: " + "、".join("—" if v is None else f"{v:+.0f}%" for v in gr) + "；" if gr else ""
         for key, _ in FACTOR_LABELS:

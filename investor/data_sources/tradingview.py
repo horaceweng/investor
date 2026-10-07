@@ -122,8 +122,9 @@ def fetch(tickers: list, columns: list) -> dict:
         if df is None or df.empty:
             continue
 
-        # 過濾: 只留 type='stock' 的股票; 同名代號取市值最大者
-        df = df[df["type"] == "stock"].copy() if "type" in df.columns else df.copy()
+        # 過濾: 只留普通股與存託憑證 (ADR: TSM、ARM、BABA、NVO…, type='dr'; 原本漏掉 dr, 這些股票沒有預估與技術面);
+        # ETF 不在這個股票掃描器裡, 抓不到。同名代號取市值最大者
+        df = df[df["type"].isin(["stock", "dr"])].copy() if "type" in df.columns else df.copy()
 
         # 同名代號可能有多個上市 (e.g., 同一公司在多個交易所), 取市值最大者
         if "name" in df.columns and "market_cap_basic" in df.columns:

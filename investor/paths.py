@@ -32,6 +32,7 @@ MAGIC_PARTIAL = CACHE / "magic_partial.csv"
 WATCHLIST = USER / "watchlist.txt"
 POOL_MODE = USER / "universe.txt"
 COOLING = USER / "cooling.json"
+GROUPS = USER / "groups.json"
 HISTORY = NAVELLIER / "history.jsonl"
 ESTIMATES = NAVELLIER / "estimates.jsonl"
 

@@ -6,7 +6,7 @@ step 函式簽名統一為 (cached, universe): cached=True 時盡量用快取 (�
 from investor.data_sources.prices import performance
 from datetime import date
 
-from investor.navellier import estimates, rating, settings
+from investor.navellier import estimates, groups, rating, settings
 from investor.screens import losers, magic, value
 from investor.superinvestors import buys
 from investor.web import presenters, store
@@ -42,7 +42,8 @@ def do_nav(cached, uni=None):
         "rows": presenters.navellier_rows(r, set(settings.load_watchlist())),
         "factors": presenters.navellier_factors(r), "asof": r["asof"],
         "missing": r["missing"], "tickers": r["tickers"], "ts": store.now(),
-        "tech_date": str(date.today()) if got_tech else None, "tech_ts": store.now() if got_tech else None}
+        "tech_date": str(date.today()) if got_tech else None, "tech_ts": store.now() if got_tech else None,
+        "group_order": r.get("group_order") or [], "groups_sig": groups.signature(mode, r["tickers"])}
 
 
 def do_tech(cached, uni=None):

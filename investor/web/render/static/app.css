@@ -84,3 +84,5 @@ td.up{color:var(--up)}td.dn{color:var(--dn)}
 tbody tr:hover{background:color-mix(in srgb,var(--acc) 8%,transparent)}
 footer{max-width:1760px;margin:0 auto;padding:0 16px 40px;color:var(--mut);font-size:12px}
 @media(max-width:600px){h1{font-size:19px}}
+
+h3.grp{margin:20px 0 6px;font-size:15px;border-left:4px solid var(--accent,#888);padding-left:8px}h3.grp .stamp{font-weight:400;margin-left:6px}

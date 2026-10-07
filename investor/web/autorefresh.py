@@ -8,7 +8,7 @@
 import time
 from datetime import date, timedelta
 
-from investor.navellier import alpha_beta, settings
+from investor.navellier import alpha_beta, groups, settings
 from investor.web import jobs, store
 
 RETRY_AFTER = {"nav": 6 * 3600, "tech": 3600}    # 秒; 評級很重又常被 Yahoo 限流, 退避久一點
@@ -27,6 +27,8 @@ def due(state, mode, today=None):
     nav = (state.get("nav") or {}).get(mode)
     if not nav or nav.get("asof") != str(alpha_beta.complete_week_cutoff(today)):
         return "nav"
+    if nav.get("groups_sig") != groups.signature(mode, nav.get("tickers") or []):
+        return "nav"                     # 分類改了: 組內排名要重算 (不需等下一週)
     if nav.get("tech_date") != str(last_trading_day(today)):
         return "tech"
     return None
