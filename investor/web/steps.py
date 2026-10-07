@@ -43,7 +43,7 @@ def do_nav(cached, uni=None):
         "factors": presenters.navellier_factors(r), "asof": r["asof"],
         "missing": r["missing"], "tickers": r["tickers"], "ts": store.now(),
         "tech_date": str(date.today()) if got_tech else None, "tech_ts": store.now() if got_tech else None,
-        "group_order": r.get("group_order") or [], "groups_sig": groups.signature(mode, r["tickers"])}
+        "group_order": r.get("group_order") or [], "method": rating.METHOD_VERSION, "groups_sig": groups.signature(mode, r["tickers"])}
 
 
 def do_tech(cached, uni=None):

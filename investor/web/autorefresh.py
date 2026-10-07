@@ -8,7 +8,7 @@
 import time
 from datetime import date, timedelta
 
-from investor.navellier import alpha_beta, groups, settings
+from investor.navellier import alpha_beta, groups, rating, settings
 from investor.web import jobs, store
 
 RETRY_AFTER = {"nav": 6 * 3600, "tech": 3600}    # 秒; 評級很重又常被 Yahoo 限流, 退避久一點
@@ -27,6 +27,8 @@ def due(state, mode, today=None):
     nav = (state.get("nav") or {}).get(mode)
     if not nav or nav.get("asof") != str(alpha_beta.complete_week_cutoff(today)):
         return "nav"
+    if nav.get("method") != rating.METHOD_VERSION:
+        return "nav"                     # 評級方法改版了: 舊方法算出的結果不能繼續用
     if mode == "watchlist" and sorted(nav.get("tickers") or []) != sorted(settings.load_watchlist()):
         return "nav"                     # 觀察清單增減了 (編輯器、☆ 點選或直接改檔都算): 新股票要納入評級
     if nav.get("groups_sig") != groups.signature(mode, nav.get("tickers") or []):

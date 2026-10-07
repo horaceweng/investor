@@ -4,7 +4,7 @@ from datetime import date
 
 import pandas as pd
 
-from investor.navellier import alpha_beta, groups, settings
+from investor.navellier import alpha_beta, groups, rating, settings
 from investor.web import autorefresh, presenters
 from investor.web.render import tabs
 from tests.helpers import temp_data
@@ -88,7 +88,7 @@ class DueOnGroupChange(unittest.TestCase):
             settings.save_watchlist(["AAA", "BBB"])
             groups.save([("G1", ["AAA", "BBB"])])
             sig = groups.signature("watchlist", ["AAA", "BBB"])
-            st = {"nav": {"watchlist": {"asof": cutoff, "tech_date": str(today), "tickers": ["AAA", "BBB"], "groups_sig": sig}}}
+            st = {"nav": {"watchlist": {"asof": cutoff, "tech_date": str(today), "tickers": ["AAA", "BBB"], "groups_sig": sig, "method": rating.METHOD_VERSION}}}
             self.assertIsNone(autorefresh.due(st, "watchlist", today))
             groups.save([("G1", ["AAA"]), ("G2", ["BBB"])])
             self.assertEqual(autorefresh.due(st, "watchlist", today), "nav")
@@ -99,7 +99,7 @@ class DueOnWatchlistChange(unittest.TestCase):
 
     def _state(self, today, tickers):
         return {"nav": {"watchlist": {"asof": str(alpha_beta.complete_week_cutoff(today)), "tech_date": str(today),
-                                      "tickers": tickers, "groups_sig": None}}}
+                                      "tickers": tickers, "groups_sig": None, "method": rating.METHOD_VERSION}}}
 
     def test_added_or_removed_ticker_triggers(self):
         today = date(2026, 10, 7)
@@ -114,7 +114,7 @@ class DueOnWatchlistChange(unittest.TestCase):
         with temp_data():
             settings.save_watchlist(["AAA"])
             st = {"nav": {"ndx": {"asof": str(alpha_beta.complete_week_cutoff(today)), "tech_date": str(today),
-                                  "tickers": ["X", "Y"], "groups_sig": None}}}
+                                  "tickers": ["X", "Y"], "groups_sig": None, "method": rating.METHOD_VERSION}}}
             self.assertIsNone(autorefresh.due(st, "ndx", today))
 
 

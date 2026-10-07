@@ -32,17 +32,18 @@ from investor.navellier import alpha_beta, fundamentals, groups as groups_mod, h
 from investor.navellier import technicals as tech_module
 
 BACKFILL_WEEKS = 8
+METHOD_VERSION = 2     # 評級方法改版時 +1: 網頁上已存的舊結果視為過期並自動重算 (2 = 自訂清單改為對同產業全市場評級)
 
 
-def cooling_flag(pct, warn, remove):
+def cooling_flag(pct, warn, remove, basis="股票池"):
     """pct: 該股票量化分數在股票池內的分位 (0~1, 1 最好)。"""
     if pct is None:
         return "N/A（本週無量化分數）"
     p = f"{pct * 100:.0f}%"
     if pct < remove:
-        return f"❌ 建議剔除（量化分數位於股票池第 {p} 分位，低於 {remove * 100:.0f}%）"
+        return f"❌ 建議剔除（量化分數位於{basis}第 {p} 分位，低於 {remove * 100:.0f}%）"
     if pct < warn:
-        return f"\U0001f53b 動能冷卻警示（量化分數位於股票池第 {p} 分位，低於 {warn * 100:.0f}%）"
+        return f"\U0001f53b 動能冷卻警示（量化分數位於{basis}第 {p} 分位，低於 {warn * 100:.0f}%）"
     return f"✅ 正常（第 {p} 分位）"
 
 
@@ -92,7 +93,7 @@ def run(tickers=None, verbose=False, mode=None):
         a = ab.get(t, {})
         cooling_str = ("N/A（資料不足 52 週，不評級）" if not a.get("eligible") else
                        "N/A（沒有同業基準，不評級）" if peers and t not in nav_info else
-                       cooling_flag(pct.get(t), cool["warn"], cool["remove"]))
+                       cooling_flag(pct.get(t), cool["warn"], cool["remove"], "同業全市場" if peers else "股票池"))
         entry.update({
             "beta_5y": a.get("beta_5y"), "alpha_ann_5y_pct": a.get("alpha_ann_5y"),
             "nav_grade": a.get("nav_grade", "N/A"), "eligible": a.get("eligible", False),

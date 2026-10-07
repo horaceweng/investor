@@ -5,7 +5,7 @@ from unittest import mock
 
 import pandas as pd
 
-from investor.navellier import alpha_beta, estimates
+from investor.navellier import alpha_beta, estimates, rating
 from investor.web import autorefresh, presenters, steps, store
 from tests.helpers import temp_data
 
@@ -22,7 +22,7 @@ class LastTradingDay(unittest.TestCase):
 class Due(unittest.TestCase):
     def _state(self, today, asof=None, tech_date=None):
         asof = asof or str(alpha_beta.complete_week_cutoff(today))
-        return {"nav": {"ndx": {"asof": asof, "tech_date": tech_date}}}
+        return {"nav": {"ndx": {"asof": asof, "tech_date": tech_date, "method": rating.METHOD_VERSION}}}
 
     def test_nothing_when_fresh(self):
         self.assertIsNone(autorefresh.due(self._state(WED, tech_date=str(WED)), "ndx", WED))
@@ -45,6 +45,14 @@ class Due(unittest.TestCase):
     def test_weekend_does_not_refetch_tech(self):
         st = self._state(SAT, tech_date=str(FRI))
         self.assertIsNone(autorefresh.due(st, "ndx", SAT) if alpha_beta.complete_week_cutoff(SAT) == FRI else None)
+
+    def test_old_method_version_needs_rating(self):
+        """評級方法改版後, 舊結果即使週數、清單都沒變也要重算 (曾因此一直顯示舊邏輯的結果)。"""
+        st = self._state(WED, tech_date=str(WED))
+        st["nav"]["ndx"]["method"] = rating.METHOD_VERSION - 1
+        self.assertEqual(autorefresh.due(st, "ndx", WED), "nav")
+        del st["nav"]["ndx"]["method"]
+        self.assertEqual(autorefresh.due(st, "ndx", WED), "nav")
 
     def test_missing_tech_date_needs_tech(self):
         self.assertEqual(autorefresh.due(self._state(WED), "ndx", WED), "tech")
