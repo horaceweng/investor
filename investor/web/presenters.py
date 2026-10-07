@@ -64,7 +64,7 @@ def tech_summary(g: pd.DataFrame) -> str:
     """一個分類的技術面摘要 (主表分組標題用): 檔數、可評級數、RSI 中位、多頭占比、距 52 週高中位。"""
     parts = [f"{len(g)} 檔"]
     rated = int(sum(1 for v in g.get("綜合評級", []) if v and v != "N/A"))
-    parts.append(f"{rated} 檔有評級" if rated else "未評等級（組內可評級者不足）")
+    parts.append(f"{rated} 檔有評級" if rated else "無評級（無同業基準或資料不足）")
     rsi, off = _num(g, "RSI"), _num(g, "距52週高%")
     tr = [v for v in g.get("趨勢", []) if v]
     if rsi:
@@ -102,7 +102,11 @@ def navellier_rows(r: dict, mine: set) -> pd.DataFrame:
         hist = " → ".join(f"{x:.2f}" for x in ser[-6:]) if ok else ""
 
         tc = tech_cells(c, c.get("overall"), c.get("cooling"))
-        rows.append({"代號": t, "分類": c.get("group"), "公司": r["names"].get(t, ""), "公司_tip": r["names"].get(t, ""), "板塊": r["sectors"].get(t, ""), "清單": "★" if t in mine else "", "綜合評級": c.get("overall"), "綜合分": c.get("combined"),
+        n_peers = c.get("n_peers")
+        basis = f"{c['industry']} · {n_peers} 檔" if c.get("industry") and n_peers else None
+        rows.append({"代號": t, "分類": c.get("group"), "同業": basis,
+                     "同業_tip": (f"評級是跟 TradingView「{c['industry']}」產業全市場市值 ≥ 20 億美元的 {n_peers} 檔同業比較，不是只跟清單內比較"
+                                  if basis else "沒有同業基準 (如 ETF)，不評等級"), "公司": r["names"].get(t, ""), "公司_tip": r["names"].get(t, ""), "板塊": r["sectors"].get(t, ""), "清單": "★" if t in mine else "", "綜合評級": c.get("overall"), "綜合分": c.get("combined"),
                      "基本面評級": c.get("fund_grade"),
                      "基本面評級_tip": f"基本面均分 {c['fund_avg']} (1–5，5 最好)" if c.get("fund_avg") else "",
                      "量化評級_tip": f"量化五分位 {c['quant_quintile']}/5" if c.get("quant_quintile") else "", "Alpha/SD": c.get("alpha_over_sd") if ok else None,

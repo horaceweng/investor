@@ -5,7 +5,7 @@ dict 欄位: id / title / task(更新按鈕對應的工作) / btn / stamp / head
 import html
 import json
 
-from investor.navellier import grading, groups as groups_mod
+from investor.navellier import groups as groups_mod
 from investor.navellier.settings import MODES, load_cooling, load_mode, load_watchlist
 from investor.universe import UNIVERSES
 from investor.web import presenters
@@ -124,7 +124,7 @@ def _watchlist_editor(mode, N):
         gl = groups_mod.load()
         amap, _ = groups_mod.assign(wl_now, gl)
         loose = [t for t in wl_now if amap.get(t) == groups_mod.UNGROUPED]
-        editor += ('<div class="wlbar" id="grbar"><span>分類：<b>%d</b> 類%s（同類放一起比較，評級改為組內排名；組內可評級少於 %d 檔不評等級）</span>'
+        editor += ('<div class="wlbar" id="grbar"><span>分類：<b>%d</b> 類%s（只決定表格分段顯示；評級是對同產業全市場比較）</span>'
                    '<button type="button" id="gredit">編輯分類</button></div>'
                    '<div class="wled" id="gred" hidden><div class="wlhead"><b>編輯分類</b>'
                    '<span class="stamp">每行「分類名: 代號 代號 …」，一檔只能放一類；沒列到的歸「未分類」</span></div>'
@@ -132,7 +132,14 @@ def _watchlist_editor(mode, N):
                    '<div class="wlact"><button type="button" id="grsave" class="primary">儲存並重算評級</button>'
                    '<button type="button" id="grcancel">取消</button><span id="grmsg"></span></div></div>'
                    % (len(gl), f"；未分類 {len(loose)} 檔：{esc(' '.join(loose))}" if loose and gl else "",
-                      grading.MIN_GROUP, esc(groups_mod.dump_text(gl))))
+                      esc(groups_mod.dump_text(gl))))
+        if loose and gl:       # 新加入、還沒放進任何分類的股票: 逐檔選分類
+            opts = ('<option value="">先不分類</option>' + "".join(f'<option value="{esc(n)}">{esc(n)}</option>' for n, _ in gl) +
+                    '<option value="__new__">＋新分類…</option>')
+            editor += ('<div class="wlbar" id="grnew"><span><b>%d 檔尚未分類</b>（新加入的股票先歸「未分類」；放進分類只影響表格怎麼分段）：</span>%s'
+                       '<button type="button" id="grapply" class="primary">套用並重算評級</button><span id="grnmsg"></span></div>'
+                       % (len(loose), "".join(f'<label style="margin:0 10px 0 0"><b>{esc(t)}</b> <select data-gt="{esc(t)}">{opts}</select></label>'
+                                              for t in loose)))
     else:
         src = "S&amp;P 500 成分股(來源: Wikipedia)" if mode == "sp500" else "Nasdaq 100 成分股(來源: Nasdaq 官方網站)"
         editor += (f'<p class="stamp">目前股票池：{src}；點「清單」欄的 ☆/★ 可把該股加入或移出自訂觀察清單'
@@ -156,6 +163,8 @@ def _navellier_columns(mode):
               ("基本面評級", "基本面", "text"), ("量化評級", "量化", "text"),
               ("Alpha/SD", "Alpha/SD", "num"), ("量化分位%", "量化分位", "plain"), ("Beta5Y", "Beta(5Y)", "num"),
               ("Alpha5Y%", "Alpha(5Y)", "plain"), ("動能", "動能", "text")]
+    if mode == "watchlist":
+        ncols += [("同業", "同業基準", "text")]
 
     # 技術面欄位 (日線, 僅供參考, 不影響評級)
     tech_cols = [("RSI", "RSI", "num"), ("RSI區間", "RSI區間", "text"), ("趨勢", "趨勢", "tone"), ("距52週高%", "距高%", "num"),
@@ -220,8 +229,9 @@ def navellier_tab(state, c):
              "綜合分 = 30% 基本面 + 70% 量化；量化 = 52 週週超額報酬的 Alpha ÷ 標準差(reward/risk)。評級 A 最好、E 最差。",
         notes=[f"評級是「{label}」內的相對排名(五分位)，不是絕對好壞" +
                ("；清單只有十幾檔時，A 只代表清單裡最強的前 20%。" if mode == "watchlist" else "；換股票池要重新更新。"),
-               ("分類：自訂清單設了分類時，基本面五分位、量化評級、動能分位與綜合評級都改為「各分類內」相對排名，表格與基本面明細依分類分段，標題列附該類的摘要（技術面：RSI 中位、多頭占比、距 52 週高；基本面：營收年增、ROE、預估修正中位與最新季 beat 數）。"
-                f"組內有 52 週資料的股票少於 {grading.MIN_GROUP} 檔時，五分位沒有意義，該類不評等級、只顯示數值。ETF 不在 TradingView 的股票掃描器裡，沒有技術面與預估資料。" if mode == "watchlist" else ""),
+               ("自訂清單的評級是「跟自己產業的全市場同業比」：清單裡的股票本來就是篩選過的，清單內互比沒有意義，所以每檔改對 TradingView 同產業、市值 ≥ 20 億美元的全部美股計算百分位（基本面因子與量化分數都用同一套算法；同業欄位顯示比較的產業與檔數）。"
+                "TradingView 沒有營業利益與股東權益的逐季歷史，同業比較沒有「營業利益率年增」，財報驚喜只用最新一季、預估修正不計，其餘因子齊全才評級；ETF 沒有同業基準，不評等級。"
+                "分類只決定表格怎麼分段顯示，並附各類摘要。" if mode == "watchlist" else ""),
                "資料不足 52 週(如近期上市)、或可計算的基本面因子少於 3 個(如部分外國公司)的股票不評級，以 N/A 顯示。" +
                ("金融業(銀行、保險等)沒有一般的營收/營業利益結構，可計算的因子較少，評級與其他產業的可比性較低。" if mode == "sp500" else ""),
                "基本面「盈餘動能」(原書：連續幾季逐漸加大的盈餘正向變化)：一階導數 = 盈餘成長率(本季 EPS ÷ 上季 EPS − 1)；二階導數 = 成長率的變化率 = (最新季成長率 − 前一季成長率) ÷ 前一季成長率，例如成長率由 +347% 變為 +91% 是 −74%；連續季數 = 連續幾季「成長率為正且比前一季更高」(0–3)，同分再比二階導數；需連續 5 季資料。滑鼠移到數字上可看近 4 季的成長率。最新一季虧損者，EPS/FCF 年增視為最差，由虧轉盈視為最佳，只有真正缺資料才略過；可計算因子少於 5 個不評級。",

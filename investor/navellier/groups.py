@@ -1,8 +1,7 @@
-"""自訂觀察清單的分類: 同類股票放一起比較 (評級改為「組內」相對排名, 表格依分類分段顯示)。
+"""自訂觀察清單的分類: 只決定表格怎麼分段顯示 (評級本身是對「同產業全市場」比較, 見 navellier.peers)。
 
 分類存在 data/user/groups.json (值得備份): {"groups": [{"name": 分類名, "tickers": [代號...]}, ...]}, 順序即顯示順序。
-只套用在自訂觀察清單; 沒被分到任何類的股票歸「未分類」。組內可評級的股票少於 MIN_GROUP 檔時, 該組不評等級 (只顯示數值),
-因為五分位在太少的樣本上沒有意義。純計算與讀寫, 不連網。
+只套用在自訂觀察清單; 沒被分到任何類的股票歸「未分類」。純計算與讀寫, 不連網。
 """
 import json
 
@@ -10,7 +9,6 @@ from investor import paths
 from investor.fileio import atomic_write, read_json
 from investor.navellier import settings
 
-MIN_GROUP = 5            # 組內至少這麼多檔才評等級
 UNGROUPED = "未分類"
 
 
@@ -86,3 +84,22 @@ def signature(mode, tickers):
     """分類設定的指紋: 分類改了, 已存的評級就過期 (autorefresh 用它判斷要不要重算)。"""
     amap, order = active(mode, tickers)
     return None if amap is None else json.dumps([order, sorted(amap.items())], ensure_ascii=False)
+
+
+def add_tickers(assignments, groups=None):
+    """把股票放進分類: assignments = {代號: 分類名}; 不存在的分類會新建, 該股原本在別類則移過去。回傳新的 [(分類名, [代號...])]。"""
+    groups = [(n, list(ts)) for n, ts in (load() if groups is None else groups)]
+    for raw, name in assignments.items():
+        t, name = settings.normalize_ticker(str(raw)), str(name).strip()
+        if t is None:
+            raise ValueError(f"無法辨識的代號: {raw!r}")
+        if not name or len(name) > 40 or ":" in name or "：" in name or "#" in name:
+            raise ValueError(f"分類名稱無效: {name!r}")
+        groups = [(n, [x for x in ts if x != t]) for n, ts in groups]
+        for n, ts in groups:
+            if n == name:
+                ts.append(t)
+                break
+        else:
+            groups.append((name, [t]))
+    return [(n, ts) for n, ts in groups if ts]

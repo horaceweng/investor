@@ -27,6 +27,8 @@ def due(state, mode, today=None):
     nav = (state.get("nav") or {}).get(mode)
     if not nav or nav.get("asof") != str(alpha_beta.complete_week_cutoff(today)):
         return "nav"
+    if mode == "watchlist" and sorted(nav.get("tickers") or []) != sorted(settings.load_watchlist()):
+        return "nav"                     # 觀察清單增減了 (編輯器、☆ 點選或直接改檔都算): 新股票要納入評級
     if nav.get("groups_sig") != groups.signature(mode, nav.get("tickers") or []):
         return "nav"                     # 分類改了: 組內排名要重算 (不需等下一週)
     if nav.get("tech_date") != str(last_trading_day(today)):

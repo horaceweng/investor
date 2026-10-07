@@ -203,9 +203,9 @@ def _fill_tv_gaps(fund, tickers):
     _save_cache(cache)
 
 
-def compute(ab_results=None, tickers=None, groups=None):
+def compute(ab_results=None, tickers=None, peers=None):
     """抓(或讀快取)基本面並評級。ab_results: alpha_beta.compute() 的結果; 給了才算「30% 基本面 + 70% 量化」綜合評級。
-    groups: {代號: 分類名}; 給了就在各分類內相對排名 (見 grading.grade)。"""
+    peers: peers.build() 的結果; 給了就改為「每檔對自己的同業全市場」評級 (見 grading.grade_vs_peers), 否則在這份 tickers 內互比。"""
     if not tickers:
         raise ValueError("tickers 不能是空的")
     notes = {}
@@ -241,7 +241,12 @@ def compute(ab_results=None, tickers=None, groups=None):
 
     require_enough(sum(1 for t in tickers if fund[t].get("n_q")), len(tickers),
                    "Navellier 基本面", "既有報告", min_ratio=0.5)
-    scores, fund_grade, combined = grading.grade(fund, tickers, ab_results, groups)
+    nav_info = {}
+    if peers:
+        scores, fund_grade, combined, nav_info = grading.grade_vs_peers(
+            peers["target_fund"], tickers, peers["industry_of"], peers["peer_fund"], ab_results or {}, peers["peer_nav"])
+    else:
+        scores, fund_grade, combined = grading.grade(fund, tickers, ab_results)
     return {"fundamentals": fund, "factor_quintiles": scores, "fund_grade": fund_grade,
-            "combined_30_70": combined, "notes": notes,
+            "combined_30_70": combined, "notes": notes, "nav_info": nav_info,
             "unavailable": [], "technicals": technicals_data}

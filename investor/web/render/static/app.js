@@ -28,7 +28,7 @@ $('#cbtn').onclick=()=>{const m=root.dataset.color==='tw'?'us':'tw';store.set('c
 let wasRunning=false,timer=null;
 function render(s){
   const msg=$('#msg');
-  $$('[data-task],#wlsave,#cbsave,#grsave').forEach(b=>b.disabled=s.running);
+  $$('[data-task],#wlsave,#cbsave,#grsave,#grapply').forEach(b=>b.disabled=s.running);
   if(s.running){const sec=Math.max(0,Math.round(Date.now()/1000-s.started));
     msg.className='run';msg.innerHTML='<span class="spin"></span>'+s.label+' — '+s.step+'（已 '+sec+' 秒）'}
   else if(s.error){msg.className='err';msg.textContent='上次更新有錯誤: '+s.error}
@@ -131,6 +131,27 @@ if(gred){
     if(!r.ok){gmsg(j.error||'儲存失敗',true);return}
     if(!j.started)alert('已有更新在進行中，分類已儲存，稍後請按「更新評級」重算');
     gmsg('');clearTimeout(timer);poll()};
+}
+
+// ── 新加入、尚未分類的股票: 逐檔選分類 ──
+const grnew=$('#grnew');
+if(grnew){
+  $$('select[data-gt]',grnew).forEach(sel=>sel.onchange=()=>{
+    if(sel.value!=='__new__')return;
+    const name=(prompt('新分類名稱（不可含冒號或 #）')||'').trim();
+    if(!name||/[:：#]/.test(name)){sel.value='';return}
+    $$('select[data-gt]',grnew).forEach(x=>{if(![...x.options].some(o=>o.value===name))x.add(new Option(name,name),x.options.length-1)});
+    sel.value=name});
+  $('#grapply').onclick=async()=>{
+    const assign={};$$('select[data-gt]',grnew).forEach(s=>{if(s.value&&s.value!=='__new__')assign[s.dataset.gt]=s.value});
+    const m=$('#grnmsg');
+    if(!Object.keys(assign).length){m.textContent='請至少為一檔選擇分類';m.style.color='var(--red)';return}
+    m.textContent='儲存中…';m.style.color='var(--mut)';
+    const r=await fetch('/api/groups/assign',{method:'POST',headers:JH,body:JSON.stringify({assign})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok){m.textContent=j.error||'儲存失敗';m.style.color='var(--red)';return}
+    if(!j.started)alert('已有更新在進行中，分類已儲存，稍後請按「更新評級」重算');
+    m.textContent='';clearTimeout(timer);poll()};
 }
 
 // ── 大股票池表格: 點「清單」欄的 ☆/★ 加入/移出自訂觀察清單 ──

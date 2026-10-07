@@ -53,6 +53,13 @@ TECH_COLUMNS = [
     "relative_volume_10d_calc",             # 10 日平均相對成交量
 ]
 
+# 同業比較用: 逐季歷史 + ROE + 最新季驚喜 + TradingView 產業分類
+PEER_COLUMNS = FUND_COLUMNS + [
+    "return_on_equity",                 # ROE (TradingView 算好的數字)
+    "eps_surprise_percent_fq",          # 最新季 EPS 驚喜%
+    "industry",                         # TradingView 產業 (如 Semiconductors、Marine Shipping)
+]
+
 MAX_BATCH = 200
 RETRY_DELAY = 5
 MAX_TRIES = 4
@@ -166,6 +173,41 @@ def fetch(tickers: list, columns: list) -> dict:
         )
 
     return result
+
+
+def fetch_industry(industries: list, min_cap: float = 2e9) -> dict:
+    """抓整個美股市場「指定產業」內、市值 >= min_cap 的股票 (同業比較基準): {專案代號: {PEER_COLUMNS..., market_cap_basic}}。
+    普通股與 ADR 都算; 同名多上市取市值最大者。"""
+    if not industries:
+        return {}
+
+    def query():
+        return (Query().set_markets("america")
+                .select("name", "type", "market_cap_basic", *PEER_COLUMNS)
+                .where(col("industry").isin(list(industries)), col("market_cap_basic") >= min_cap,
+                       col("type").isin(["stock", "dr"]))
+                .limit(5000).get_scanner_data())
+    try:
+        _, df = _retry_fn(query)
+    except Exception as e:
+        raise RuntimeError(f"TradingView 同業查詢失敗: {e}")
+    if df is None or df.empty:
+        raise RuntimeError("TradingView 同業查詢沒有回傳任何資料 (疑似被限流)")
+    df = df[~df["name"].str.contains("/", regex=False)]            # 優先股 (RNR/PF、HIG/PG…) 不是同業, 會污染比較
+    df = df.sort_values("market_cap_basic", ascending=False, na_position="last").drop_duplicates(subset=["name"], keep="first")
+    out = {}
+    for _, row in df.iterrows():
+        entry = {}
+        for c in PEER_COLUMNS + ["market_cap_basic"]:
+            v = row.get(c)
+            entry[c] = None if (v is None or (isinstance(v, float) and pd.isna(v))) else v
+        out[_denormalize_ticker(row["name"])] = entry
+    return out
+
+
+def fetch_peer_targets(tickers: list) -> dict:
+    """抓指定股票自己的同業比較欄位 (含 industry、市值); 不在 TradingView 的 (如 ETF) 不會出現在結果裡。抓取失敗會丟 RuntimeError。"""
+    return fetch(tickers, PEER_COLUMNS)
 
 
 def fetch_fundamentals(tickers: list) -> dict:

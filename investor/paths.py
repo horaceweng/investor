@@ -28,6 +28,7 @@ SEC_CACHE = CACHE / "13f"
 FUNDAMENTALS_CACHE = CACHE / "fundamentals.json"
 SCREEN_CACHE = CACHE / "screens"
 MAGIC_PARTIAL = CACHE / "magic_partial.csv"
+PEER_SCORES = CACHE / "peer_scores.json"
 
 WATCHLIST = USER / "watchlist.txt"
 POOL_MODE = USER / "universe.txt"
