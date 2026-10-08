@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from investor.navellier import alpha_beta, groups, rating, settings
 from investor.web import jobs, store
 
-RETRY_AFTER = {"nav": 6 * 3600, "tech": 3600}    # 秒; 評級很重又常被 Yahoo 限流, 退避久一點
+RETRY_AFTER = {"nav": 6 * 3600, "tech": 3600, "momentum": 6 * 3600}    # 秒; 評級很重又常被 Yahoo 限流, 退避久一點
 _last_try = {}
 
 
@@ -38,6 +38,12 @@ def due(state, mode, today=None):
     return None
 
 
+def momentum_due(state, today=None):
+    """全市場動能榜: 每週一次 (最近一個已收完的週五變了才重算)。"""
+    m = state.get("momentum")
+    return not m or m.get("asof") != str(alpha_beta.complete_week_cutoff(today or date.today()))
+
+
 def maybe_start(state=None, now=None):
     """啟動背景更新 (若需要); 不阻塞。回傳啟動的工作名稱或 None。"""
     state = store.state if state is None else state
@@ -46,6 +52,8 @@ def maybe_start(state=None, now=None):
         return None
     with store.lock:
         kind = due(state, mode)
+        if not kind and momentum_due(state):
+            kind, mode = "momentum", "all"         # 與股票池無關; 評級與技術面都是最新時才輪到它
     now = time.time() if now is None else now
     last = _last_try.get((kind, mode))
     if not kind or (last is not None and now - last < RETRY_AFTER[kind]):

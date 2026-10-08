@@ -84,12 +84,12 @@ class Page(unittest.TestCase):
         for mode in ("watchlist", "sp500", "ndx"):
             html = self._page(mode)
             self.assertIn("<!doctype html>", html)
-            self.assertEqual(html.count('<section id="s'), 7)
+            self.assertEqual(html.count('<section id="s'), 8)
             self.assertIn("尚無資料", html)
 
     def test_tab_order_puts_superinvestors_last(self):
         html = self._page("sp500")
-        order = [html.index(f'data-t="{i}"') for i in ("s1", "s2", "s3", "s4", "s6", "s7", "s5")]
+        order = [html.index(f'data-t="{i}"') for i in ("s1", "s2", "s3", "s4", "s6", "s7", "s8", "s5")]
         self.assertEqual(order, sorted(order))
 
     def test_screens_are_not_applicable_for_the_custom_watchlist(self):

@@ -205,6 +205,28 @@ def fetch_industry(industries: list, min_cap: float = 2e9) -> dict:
     return out
 
 
+def fetch_market(min_cap: float = 2e9) -> dict:
+    """全市場名單: NYSE/NASDAQ/AMEX 上市、市值 >= min_cap 的普通股與 ADR (不含優先股、場外交易)。
+    回傳 {專案代號: {description, industry, sector, market_cap_basic}}。"""
+    cols = ["description", "industry", "sector", "market_cap_basic"]
+
+    def query():
+        return (Query().set_markets("america").select("name", "type", "exchange", *cols)
+                .where(col("market_cap_basic") >= min_cap, col("type").isin(["stock", "dr"]),
+                       col("exchange").isin(["NYSE", "NASDAQ", "AMEX"]))
+                .limit(8000).get_scanner_data())
+    try:
+        _, df = _retry_fn(query)
+    except Exception as e:
+        raise RuntimeError(f"TradingView 全市場名單查詢失敗: {e}")
+    if df is None or len(df) < 500:
+        raise RuntimeError(f"TradingView 全市場名單只有 {0 if df is None else len(df)} 檔, 疑似被限流")
+    df = df[~df["name"].str.contains("/", regex=False)]
+    df = df.sort_values("market_cap_basic", ascending=False, na_position="last").drop_duplicates(subset=["name"], keep="first")
+    return {_denormalize_ticker(r["name"]): {c: (None if (isinstance(r[c], float) and pd.isna(r[c])) else r[c]) for c in cols}
+            for _, r in df.iterrows()}
+
+
 def fetch_peer_targets(tickers: list) -> dict:
     """抓指定股票自己的同業比較欄位 (含 industry、市值); 不在 TradingView 的 (如 ETF) 不會出現在結果裡。抓取失敗會丟 RuntimeError。"""
     return fetch(tickers, PEER_COLUMNS)

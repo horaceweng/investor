@@ -7,7 +7,7 @@ from investor.data_sources.prices import performance
 from datetime import date
 
 from investor.navellier import estimates, groups, rating, settings
-from investor.screens import losers, magic, value
+from investor.screens import losers, magic, momentum, value
 from investor.superinvestors import buys
 from investor.web import presenters, store
 
@@ -61,6 +61,11 @@ def do_tech(cached, uni=None):
     N.update(tech_date=str(date.today()), tech_ts=store.now())
 
 
+def do_momentum(cached, uni=None):
+    """全市場動能榜 (與頁首選的股票池無關)。"""
+    store.state["momentum"] = {**momentum.compute(), "ts": store.now()}
+
+
 def do_perf(cached, uni=None):
     """所有已存結果中的股票, 一次算 1M/3M/6M/1Y 股價表現。"""
     frames = []
@@ -76,7 +81,8 @@ def do_perf(cached, uni=None):
 POOL_SCREENS = {"losers", "value", "magic"}   # 依股票池計算的選股功能 (自訂觀察清單不適用)
 STEPS = {"losers": ("13 週跌幅", do_losers), "value": ("價值面基本面", do_value),
          "buys": ("大師 13F", do_buys), "magic": ("神奇公式財報", do_magic),
-         "nav": ("Navellier 評級", do_nav), "tech": ("技術面", do_tech)}
+         "nav": ("Navellier 評級", do_nav), "tech": ("技術面", do_tech),
+         "momentum": ("全市場動能榜", do_momentum)}
 TASKS = {                                     # 工作(按鈕) -> (顯示名稱, 步驟清單)
     "losers": ("更新股價與跌幅", ["losers"]),
     "value": ("更新基本面", ["value"]),
@@ -84,12 +90,13 @@ TASKS = {                                     # 工作(按鈕) -> (顯示名稱,
     "magic": ("更新神奇公式財報", ["magic"]),
     "nav": ("更新 Navellier 評級", ["nav"]),
     "tech": ("更新技術面", ["tech"]),
+    "momentum": ("更新全市場動能榜", ["momentum"]),
     "all": ("全部更新", ["losers", "value", "buys", "magic", "nav"]),
     "init": ("首次建立資料 (使用快取)", ["losers", "value", "buys", "magic", "nav"]),
 }
 
 
-NO_PERF = {"tech"}                            # 這些工作不需要重算股價表現 (沒有新增股票)
+NO_PERF = {"tech", "momentum"}                            # 這些工作不需要重算股價表現 (沒有新增股票)
 
 
 def applicable(task: str, mode: str) -> bool:

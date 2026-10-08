@@ -244,13 +244,70 @@ def navellier_tab(state, c):
         table=nbody, notes_end=True)
 
 
+MOM_COLS = [("清單", "清單", "star"), ("代號", "代號", "ticker"), ("公司", "公司", "co"), ("標記", "標記", "text"),
+            ("A13分位", "A13分位", "int"), ("A26分位", "A26分位", "int"), ("A52分位", "A52分位", "int"),
+            ("贏SPY週%", "贏SPY週%", "int"), ("13週%", "13週", "pct"), ("26週%", "26週", "pct"), ("離52週高%", "離52週高", "pct"),
+            ("波動%", "年化波動%", "int"), ("40週線", "40週線", "text"), ("市值億", "市值(億)", "int")]
+IND_COLS = [("產業", "產業", "text"), ("檔數", "檔數", "int"), ("產業動能百分位", "動能分位", "int"),
+            ("半年報酬中位%", "半年中位", "pct"), ("季報酬中位%", "季中位", "pct"), ("站上40週線%", "站上40週線%", "int"),
+            ("持續強勢檔數", "持續強勢", "int"), ("候選檔數", "候選", "int")]
+
+
+def momentum_tab(state, c):
+    """全市場動能榜: 大盤環境、產業動能表, 再依產業 (動能由強到弱) 分段列出持續強勢的候選股。與頁首股票池無關。"""
+    M = state.get("momentum")
+    body, desc, extra = "", "", ""
+    if M:
+        rg = M["regime"]
+        desc = (f"美股 NYSE/NASDAQ/AMEX、市值 ≥ 20 億美元共 {M['n_universe']} 檔；候選 {M['n_cand']} 檔，其中「持續強勢」{M['n_p']} 檔。"
+                f"資料截至 {M['asof']} 那週收盤。")
+        extra = ('<div class="note"><b>大盤環境：</b>' +
+                 (f"SPY 在 40 週線之上 ({rg['dist'] * 100:+.1f}%)。" if rg["above"] else
+                  f"⚠ SPY 在 40 週線之下 ({rg['dist'] * 100:+.1f}%)。回測中大盤在 40 週線下時，下列訊號幾乎失效，請保守看待。") + "</div>"
+                 '<h3>產業動能 <span class="stamp">(依產業半年報酬中位數排序；只列 ≥ 8 檔的產業)</span></h3>' +
+                 table(M["industries"], IND_COLS, {}, with_perf=False, compact=True))
+        rows = M["rows"].copy()
+        mine = set(load_watchlist())
+        rows["清單"] = rows["代號"].isin(mine)
+        order = list(M["industries"]["產業"])
+        info = M["industries"].set_index("產業")
+        for ind_name in order + sorted(set(rows["產業"].dropna()) - set(order)):
+            sub = rows[rows["產業"] == ind_name].reset_index(drop=True)
+            if sub.empty:
+                continue
+            if ind_name in info.index:
+                r = info.loc[ind_name]
+                head = f"動能分位 {r['產業動能百分位']:.0f}；半年中位 {r['半年報酬中位%']:+.0f}%；站上 40 週線 {r['站上40週線%']:.0f}%；候選 {len(sub)} 檔"
+            else:
+                head = f"產業檔數不足 8，無產業動能；候選 {len(sub)} 檔"
+            body += f'<h3 class="grp">{esc(ind_name)} <span class="stamp">{esc(head)}</span></h3>' + table(sub, MOM_COLS, {}, with_perf=False)
+    return dict(
+        id="s8", title="全市場動能榜", task="momentum", btn="更新動能榜", stamp=_stamp(M), extra=extra,
+        heading="全市場動能榜 — 持續強勢的股票（依產業）", desc=desc +
+        " 每檔的 A13 / A26 / A52 是 13 / 26 / 52 週 Alpha/SD 在全市場的百分位（100 最強）；點 ☆ 可加入自訂觀察清單。",
+        notes=["<b>這張表是觀察清單的來源，不是買進訊號。</b>依據是 2019–2026 年全市場週資料的回測（全部只用當時已知的價格）：",
+               "「強者恆強」在右尾成立：26 / 52 週 Alpha/SD 在全市場前 10% 的股票，之後 26 週翻倍的比例約為全體的 2–2.5 倍（約 2.3% 對 1.0%），"
+               "52 週翻倍約 5% 對 3%；只看當時市值 ≥ 100 億（生存者偏差最小）結論相同。半年與一年都強的，翻倍比例最高。",
+               "要翻倍必須有波動：年化波動 ≥ 45% 是機械性的必要條件（標「高波動」），不代表方向。在高波動股票裡，持續強勢者 26 週翻倍約 6%（高波動全體約 3.5%），"
+               "跌 30% 以上約 12–15%，並沒有更高。",
+               "「持續強勢」= 半年 Alpha/SD 前 20%、半年內 ≥ 60% 的週贏 SPY、站上且上彎的 40 週線、離 52 週高 < 10%。再加「產業順風」（產業半年報酬中位數在前 30%）時，"
+               "高波動股票的 26 週翻倍約 7%、上漲 ≥ 50% 約 19%、跌 30% 以上約 11%，是回測中風險報酬最好的組合。",
+               "「只有短期強」（13 週強但半年還沒強）回測中較差，不要單獨依賴；1 週強勢、剛突破 40 週線這類更短的訊號沒有效果或為負，所以不列。",
+               "翻倍股通常在起漲後 4–13 週內亮起這些指標，但那時中位數已漲約 25–55%，之後到第 26 週中位數仍剩約 50–80%。所以會晚一步，但不會太晚。",
+               "限制：機率仍然低；樣本只有 2019–2026（含 2020 反彈與 2023 年後的 AI 行情）；名單是現在仍上市的公司（生存者偏差）；未扣交易成本。"
+               "每週的候選會存進 data/navellier/momentum_history.jsonl，之後可以回頭驗證這些標記的實際表現。",
+               "每週自動更新（新的一週收盤後，開啟程式或重新整理頁面時檢查）；同一週內不重抓價格。"],
+        table=body, notes_end=True)
+
+
 def make_tabs(state: dict) -> list:
     c = Ctx(state)
-    tabs = [losers_tab(state, c), *value_tabs(state, c), buys_tab(state, c), magic_tab(state, c), navellier_tab(state, c)]
+    tabs = [losers_tab(state, c), *value_tabs(state, c), buys_tab(state, c), magic_tab(state, c), navellier_tab(state, c),
+            momentum_tab(state, c)]
     if c.uni is None:
         for t in tabs:
             if t["id"] in ("s1", "s2", "s3", "s4", "s6"):
                 t.update(na=True, heading=t["title"], desc="", notes=[], table="", stamp="", btn="")
-    order = ["s1", "s2", "s3", "s4", "s6", "s7", "s5"]        # 大師買進(s5)放最右邊
+    order = ["s1", "s2", "s3", "s4", "s6", "s7", "s8", "s5"]  # 大師買進(s5)放最右邊
     tabs.sort(key=lambda t: order.index(t["id"]))
     return tabs
