@@ -194,6 +194,8 @@ class Page(unittest.TestCase):
         self.assertIn('<h3 class="grp">Hot', t["table"])
         self.assertIn('class="star on" data-tk="H9"', t["table"])
         self.assertIn('data-tk="H8"', t["table"])
+        self.assertIn('title="近 26 週 (約半年) 每週相對 SPY', t["table"])        # 表頭滑鼠提示
+        self.assertIn('title="產業半年報酬中位數', t["extra"])
 
     def test_tab_empty_state(self):
         from investor.web.render import tabs

@@ -44,17 +44,23 @@ def cell(kind, v, extra=""):
     return f'<td class="n" data-v="{v}"{extra}>{v:,.2f}</td>'
 
 
+def _th(col):
+    """表頭; col = (欄位名, 標題, kind[, 滑鼠提示])。"""
+    lab, k = col[1], col[2]
+    tip = f' title="{esc(col[3])}"' if len(col) > 3 and col[3] else ""
+    return f'<th data-k="{"t" if k in ("text", "tone", "ticker", "series", "co") else "n"}"{tip}>{esc(lab)}</th>'
+
+
 def table(df, cols, perf, with_perf=True, tail=(), compact=False):
-    """cols: [(欄位名, 標題, kind)]; 自動附加 1M/3M/6M/1Y 欄。"""
-    head = "<th>#</th>" + "".join(
-        f'<th data-k="{"t" if k in ("text", "tone", "ticker", "series", "co") else "n"}">{esc(lab)}</th>' for _, lab, k in cols)
+    """cols: [(欄位名, 標題, kind[, 表頭滑鼠提示])]; 自動附加 1M/3M/6M/1Y 欄。"""
+    head = "<th>#</th>" + "".join(_th(c) for c in cols)
     if with_perf:
         head += "".join(f'<th data-k="n">{p}</th>' for p in PERF)
-    head += "".join(f'<th data-k="{"t" if k in ("text", "tone", "ticker", "series", "co") else "n"}">{esc(lab)}</th>' for _, lab, k in tail)
+    head += "".join(_th(c) for c in tail)
     rows = []
     for i, r in enumerate(df.to_dict("records"), 1):
         tds = f'<td class="n rk" data-v="{i}">{i}</td>'
-        for c, _, k in cols:
+        for c, _, k, *_ in cols:
             txt = r.get(c + "_txt")
             if txt and not (isinstance(r.get(c), (int, float)) and r.get(c) == r.get(c)):    # 虧損/轉盈: 顯示文字而非「—」
                 tds += (f'<td class="n" data-v="{-1e18 if txt == "虧損" else 1e18}" title="{esc(r.get(c + "_tip", ""))}">'
@@ -70,7 +76,7 @@ def table(df, cols, perf, with_perf=True, tail=(), compact=False):
         if with_perf:
             for p in PERF:
                 tds += cell("pct", perf.get(r.get("代號"), {}).get(p))
-        for c, _, k in tail:
+        for c, _, k, *_ in tail:
             tip = r.get(c + "_tip")
             tds += cell(k, r.get(c), f' title="{esc(tip)}"' if tip else "")
         rows.append(f"<tr>{tds}</tr>")
