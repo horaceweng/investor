@@ -3,14 +3,18 @@
 - 技術面: 每個交易日一次 (週末沿用週五的資料)。只抓一次 TradingView, 不碰評級。
 - 評級:   每週一次 -- 最近一個已收完的週五 (alpha_beta.complete_week_cutoff) 變了才重算;
           同一週內重算結果本來就相同, 所以不重複上網。
+- 排程:   伺服器每隔一段時間呼叫 scheduled_start(): 週六早上 SCHEDULE_HOUR 點起, 依序把三個股票池的評級與
+          全市場動能榜算到最新, 不必等人打開頁面。電腦當時在睡眠的話, 醒來後的下一次檢查就會補做。
 更新失敗後隔一段時間才會再試, 避免每次重新整理頁面都重打一次被限流的來源。
 """
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, time as dtime, timedelta
 
 from investor.navellier import alpha_beta, groups, rating, settings
 from investor.web import jobs, store
 
+SCHEDULE_HOUR = 7                                                      # 週六早上幾點開始排程更新
+SCHEDULE_MODES = ("sp500", "ndx", "watchlist")                         # 排程更新的股票池 (依序)
 RETRY_AFTER = {"nav": 6 * 3600, "tech": 3600, "momentum": 6 * 3600}    # 秒; 評級很重又常被 Yahoo 限流, 退避久一點
 _last_try = {}
 
@@ -61,4 +65,39 @@ def maybe_start(state=None, now=None):
     if jobs.start_job(kind):
         _last_try[(kind, mode)] = now
         return kind
+    return None
+
+
+def weekly_ready(now_dt=None):
+    """這一週的排程更新時間到了沒: 最近一個已收完的週五的隔天 (週六) SCHEDULE_HOUR 點以後。
+    週六 0 點到 SCHEDULE_HOUR 點之間新的一週已收完, 但還不到排程時間 (頁面載入仍會照常更新目前的股票池)。"""
+    now_dt = now_dt or datetime.now()
+    cutoff = alpha_beta.complete_week_cutoff(now_dt.date())
+    return now_dt >= datetime.combine(cutoff + timedelta(days=1), dtime(SCHEDULE_HOUR))
+
+
+def scheduled_start(state=None, now=None, now_dt=None):
+    """排程更新: 時間到了就依序啟動「評級過期的股票池」與動能榜, 一次一個 (下一次檢查再接下一個)。
+    只做每週的評級與動能榜; 技術面仍由頁面載入時處理。回傳 (工作, 股票池) 或 None。"""
+    if not weekly_ready(now_dt):
+        return None
+    state = store.state if state is None else state
+    now = time.time() if now is None else now
+    todo = []
+    with store.lock:
+        for mode in SCHEDULE_MODES:
+            if mode == "watchlist" and not settings.load_watchlist():
+                continue
+            if due(state, mode) == "nav":
+                todo.append(("nav", mode))
+        if momentum_due(state):
+            todo.append(("momentum", "all"))
+    for kind, mode in todo:
+        last = _last_try.get((kind, mode))
+        if last is not None and now - last < RETRY_AFTER[kind]:
+            continue                       # 剛失敗過: 先做下一個, 退避時間過了再回來
+        if not jobs.start_job(kind, mode if kind == "nav" else None):
+            return None                    # 已有工作在跑: 下一次檢查再來
+        _last_try[(kind, mode)] = now
+        return kind, mode
     return None

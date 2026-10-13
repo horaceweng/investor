@@ -6,6 +6,7 @@
 import argparse
 import json
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -114,6 +115,21 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(e)})
 
 
+SCHEDULE_CHECK = 600   # 秒; 排程更新多久檢查一次 (到點才做, 沒到點或都是最新就不上網)
+
+
+def _scheduler():
+    """背景排程: 每週六早上把三個股票池的評級與全市場動能榜算到最新 (autorefresh.scheduled_start)。"""
+    while True:
+        try:
+            started = autorefresh.scheduled_start()
+            if started:
+                print(f"排程更新: {started[0]} ({started[1]})", flush=True)
+        except Exception as e:                       # 排程失敗不能讓伺服器掛掉, 下次檢查再試
+            print(f"排程更新檢查失敗: {e}", flush=True)
+        time.sleep(SCHEDULE_CHECK)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="選股儀表板 (本機網頁程式)")
     ap.add_argument("--port", type=int, default=8765)
@@ -144,6 +160,7 @@ def main(argv=None):
         jobs.start_job("init")
     else:
         autorefresh.maybe_start()
+    threading.Thread(target=_scheduler, daemon=True).start()
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"

@@ -1,6 +1,6 @@
 """自動更新: 什麼時候該更新、什麼時候絕對不上網; 只更新技術面不動評級; 快照同日合併。"""
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest import mock
 
 import pandas as pd
@@ -86,6 +86,66 @@ class MaybeStart(unittest.TestCase):
         with mock.patch.object(autorefresh.settings, "load_watchlist", return_value=[]):
             self.assertIsNone(autorefresh.maybe_start({}, now=1000))
         self.start.assert_not_called()
+
+
+class Scheduled(unittest.TestCase):
+    """週六早上的排程更新: 到點才做、三個股票池依序、最後動能榜、失敗的先跳過。"""
+    SAT_AM = datetime(2026, 10, 10, 8)                 # 10/9 那週收完的隔天早上
+
+    def setUp(self):
+        autorefresh._last_try.clear()
+        self.p = [mock.patch.object(autorefresh.settings, "load_watchlist", return_value=["AAA"]),
+                  mock.patch.object(autorefresh.jobs, "start_job", return_value=True)]
+        _, self.start = [p.start() for p in self.p]
+        self.addCleanup(lambda: [p.stop() for p in self.p])
+
+    def _fresh(self, *modes):
+        asof = str(alpha_beta.complete_week_cutoff(self.SAT_AM.date()))
+        nav = {m: {"asof": asof, "method": rating.METHOD_VERSION, "tickers": ["AAA"] if m == "watchlist" else [],
+                   "groups_sig": None, "tech_date": "x"} for m in modes}
+        return {"nav": nav}
+
+    def run_at(self, state, now_dt, now=1000):
+        with mock.patch.object(autorefresh.groups, "signature", return_value=None):
+            return autorefresh.scheduled_start(state, now=now, now_dt=now_dt)
+
+    def test_waits_until_saturday_morning(self):
+        self.assertFalse(autorefresh.weekly_ready(datetime(2026, 10, 10, 6, 59)))
+        self.assertTrue(autorefresh.weekly_ready(datetime(2026, 10, 10, 7)))
+        self.assertTrue(autorefresh.weekly_ready(datetime(2026, 10, 12, 13)))     # 週六在睡眠: 週一補做
+        self.assertTrue(autorefresh.weekly_ready(datetime(2026, 10, 9, 23)))      # 上一週的已到點 (是否過期由 due 判斷)
+        self.assertIsNone(self.run_at({}, datetime(2026, 10, 10, 6)))
+        self.start.assert_not_called()
+
+    def test_pools_in_order_then_momentum(self):
+        st = self._fresh()
+        self.assertEqual(self.run_at(st, self.SAT_AM), ("nav", "sp500"))
+        self.start.assert_called_with("nav", "sp500")
+        st = self._fresh("sp500")
+        self.assertEqual(self.run_at(st, self.SAT_AM), ("nav", "ndx"))
+        st = self._fresh("sp500", "ndx")
+        self.assertEqual(self.run_at(st, self.SAT_AM), ("nav", "watchlist"))
+        st = self._fresh("sp500", "ndx", "watchlist")
+        self.assertEqual(self.run_at(st, self.SAT_AM), ("momentum", "all"))
+        self.start.assert_called_with("momentum", None)
+        st["momentum"] = {"asof": str(alpha_beta.complete_week_cutoff(self.SAT_AM.date()))}
+        self.assertIsNone(self.run_at(st, self.SAT_AM))                          # 全部最新: 不上網
+
+    def test_failed_pool_skipped_until_backoff(self):
+        st = self._fresh()
+        self.run_at(st, self.SAT_AM, now=1000)                                    # sp500 失敗了 (仍過期)
+        self.assertEqual(self.run_at(st, self.SAT_AM, now=1600), ("nav", "ndx"))  # 先做下一個
+        self.assertEqual(self.run_at(st, self.SAT_AM, now=1000 + 7 * 3600), ("nav", "sp500"))
+
+    def test_busy_waits(self):
+        self.start.return_value = False
+        self.assertIsNone(self.run_at({}, self.SAT_AM))
+        self.assertEqual(autorefresh._last_try, {})                               # 沒有真的嘗試, 不算退避
+
+    def test_empty_watchlist_skipped(self):
+        st = self._fresh("sp500", "ndx")
+        with mock.patch.object(autorefresh.settings, "load_watchlist", return_value=[]):
+            self.assertEqual(self.run_at(st, self.SAT_AM), ("momentum", "all"))
 
 
 class ApplyTechnicals(unittest.TestCase):

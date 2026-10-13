@@ -9,11 +9,11 @@ job = {"running": False, "task": "", "label": "", "step": "", "started": 0, "fin
 _lock = threading.Lock()
 
 
-def run_job(task: str) -> None:
+def run_job(task: str, mode=None) -> None:
     label, modules = steps.TASKS[task]
     cached = task == "init"
     errors = []
-    uni = settings.load_mode()         # 頁首選的股票池; 工作開始時鎖定, 中途切換不影響這次更新
+    uni = mode or settings.load_mode()  # 指定的股票池 (排程用), 否則頁首選的; 工作開始時鎖定, 中途切換不影響這次更新
     if uni == "watchlist":             # 自訂觀察清單: 跌幅/本益比/淨值比/殖利率/神奇公式不適用
         modules = [m for m in modules if m not in steps.POOL_SCREENS]
     n = len(modules) + (task not in steps.NO_PERF)
@@ -37,11 +37,12 @@ def run_job(task: str) -> None:
     job.update(running=False, finished=time.time(), error=" ｜ ".join(errors) or None, step="")
 
 
-def start_job(task: str) -> bool:
-    """啟動背景工作; 已有工作在跑則回傳 False。"""
+def start_job(task: str, mode=None) -> bool:
+    """啟動背景工作; 已有工作在跑則回傳 False。mode: 指定股票池 (排程更新非目前選的股票池時用), None = 頁首選的。"""
     with _lock:
         if job["running"]:
             return False
-        job.update(running=True, task=task, label=steps.TASKS[task][0], step="準備中", started=time.time(), error=None)
-    threading.Thread(target=run_job, args=(task,), daemon=True).start()
+        label = steps.TASKS[task][0] + (f"（{settings.MODES[mode]}）" if mode else "")
+        job.update(running=True, task=task, label=label, step="準備中", started=time.time(), error=None)
+    threading.Thread(target=run_job, args=(task, mode), daemon=True).start()
     return True

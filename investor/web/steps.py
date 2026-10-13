@@ -1,7 +1,8 @@
 """更新步驟: 把各功能的計算結果寫進 store.state, 並定義「工作」(按鈕) 由哪些步驟組成。
 
 step 函式簽名統一為 (cached, universe): cached=True 時盡量用快取 (首次建立資料); universe 是頁首選的股票池
-('sp500' / 'ndx' / 'watchlist'); 不依股票池的功能 (大師買進、Navellier 自己讀設定) 會忽略它。
+('sp500' / 'ndx' / 'watchlist'); 不依股票池的功能 (大師買進、動能榜) 會忽略它;
+Navellier 用它決定評哪個股票池 (排程更新時可以不是頁首選的那個)。
 """
 from investor.data_sources.prices import performance
 from datetime import date
@@ -35,7 +36,7 @@ def do_magic(cached, uni):
 
 
 def do_nav(cached, uni=None):
-    mode = settings.load_mode()
+    mode = uni or settings.load_mode()
     r = rating.run(verbose=False, mode=mode)
     got_tech = any(c.get("trend") is not None or c.get("rsi") is not None for c in r["report"].values())
     store.state.setdefault("nav", {})[mode] = {
@@ -48,7 +49,7 @@ def do_nav(cached, uni=None):
 
 def do_tech(cached, uni=None):
     """只更新評級表的技術面欄位 (一次 TradingView 請求); 評級與基本面不動。"""
-    mode = settings.load_mode()
+    mode = uni or settings.load_mode()
     N = (store.state.get("nav") or {}).get(mode)
     if not N:
         raise RuntimeError("尚無評級資料, 請先更新評級")
