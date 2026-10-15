@@ -18,6 +18,7 @@ def temp_data():
             "STATE_FILE": data / "state.pkl", "SEC_CACHE": data / "cache" / "13f",
             "FUNDAMENTALS_CACHE": data / "cache" / "fundamentals.json", "SCREEN_CACHE": data / "cache" / "screens",
             "MAGIC_PARTIAL": data / "cache" / "magic_partial.csv", "PEER_SCORES": data / "cache" / "peer_scores.json", "MARKET_PRICES": data / "cache" / "market_weekly.pkl",
+            "AUTOREFRESH_TRIES": data / "cache" / "autorefresh_tries.json",
             "MOMENTUM_HISTORY": data / "navellier" / "momentum_history.jsonl", "WATCHLIST": data / "user" / "watchlist.txt",
             "POOL_MODE": data / "user" / "universe.txt", "COOLING": data / "user" / "cooling.json", "GROUPS": data / "user" / "groups.json",
             "HISTORY": data / "navellier" / "history.jsonl", "ESTIMATES": data / "navellier" / "estimates.jsonl",

@@ -30,6 +30,7 @@ SCREEN_CACHE = CACHE / "screens"
 MAGIC_PARTIAL = CACHE / "magic_partial.csv"
 PEER_SCORES = CACHE / "peer_scores.json"
 MARKET_PRICES = CACHE / "market_weekly.pkl"
+AUTOREFRESH_TRIES = CACHE / "autorefresh_tries.json"   # 自動更新上次嘗試時間 (退避用)
 
 WATCHLIST = USER / "watchlist.txt"
 POOL_MODE = USER / "universe.txt"

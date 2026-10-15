@@ -3,13 +3,17 @@
 - 技術面: 每個交易日一次 (週末沿用週五的資料)。只抓一次 TradingView, 不碰評級。
 - 評級:   每週一次 -- 最近一個已收完的週五 (alpha_beta.complete_week_cutoff) 變了才重算;
           同一週內重算結果本來就相同, 所以不重複上網。
-- 排程:   伺服器每隔一段時間呼叫 scheduled_start(): 週六早上 SCHEDULE_HOUR 點起, 依序把三個股票池的評級與
-          全市場動能榜算到最新, 不必等人打開頁面。電腦當時在睡眠的話, 醒來後的下一次檢查就會補做。
+- 排程:   程式醒著時看門狗 (ondemand.watchdog) 每分鐘呼叫 scheduled_start(): 週六早上 SCHEDULE_HOUR 點起, 依序把
+          三個股票池的評級與全市場動能榜算到最新, 不必等人打開頁面。程式平常閒置會結束, 由 launchd 定時工作
+          (週六 SCHEDULE_HOUR 點、登入時; 電腦睡眠就醒來後) 敲一下把它叫醒。
 更新失敗後隔一段時間才會再試, 避免每次重新整理頁面都重打一次被限流的來源。
 """
+import json
 import time
 from datetime import date, datetime, time as dtime, timedelta
 
+from investor import paths
+from investor.fileio import atomic_write
 from investor.navellier import alpha_beta, groups, rating, settings
 from investor.web import jobs, store
 
@@ -17,6 +21,21 @@ SCHEDULE_HOUR = 7                                                      # 週六�
 SCHEDULE_MODES = ("sp500", "ndx", "watchlist")                         # 排程更新的股票池 (依序)
 RETRY_AFTER = {"nav": 6 * 3600, "tech": 3600, "momentum": 6 * 3600}    # 秒; 評級很重又常被 Yahoo 限流, 退避久一點
 _last_try = {}
+PERSIST = False          # 伺服器啟動時設為 True: 退避時間存檔 (程式閒置結束後再啟動仍記得); 測試不寫檔
+
+
+def load_tries():
+    try:
+        raw = json.loads(paths.AUTOREFRESH_TRIES.read_text())
+        _last_try.update({tuple(k.split("|", 1)): float(v) for k, v in raw.items()})
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def _remember(key, now):
+    _last_try[key] = now
+    if PERSIST:
+        atomic_write(paths.AUTOREFRESH_TRIES, json.dumps({f"{k}|{m}": t for (k, m), t in _last_try.items()}))
 
 
 def last_trading_day(today=None):
@@ -63,7 +82,7 @@ def maybe_start(state=None, now=None):
     if not kind or (last is not None and now - last < RETRY_AFTER[kind]):
         return None
     if jobs.start_job(kind):
-        _last_try[(kind, mode)] = now
+        _remember((kind, mode), now)
         return kind
     return None
 
@@ -98,6 +117,6 @@ def scheduled_start(state=None, now=None, now_dt=None):
             continue                       # 剛失敗過: 先做下一個, 退避時間過了再回來
         if not jobs.start_job(kind, mode if kind == "nav" else None):
             return None                    # 已有工作在跑: 下一次檢查再來
-        _last_try[(kind, mode)] = now
+        _remember((kind, mode), now)
         return kind, mode
     return None

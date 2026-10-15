@@ -1,18 +1,17 @@
 """HTTP 伺服器: 只負責「收請求 -> 存取檢查/登入 -> 路由 -> 回應」; 實際的操作在 api.py, 頁面在 render/。
 
 用法: .venv/bin/python main.py [--port 8765] [--no-open] [--host 127.0.0.1] [--quarter YYYY-MM-DD]
-預設只綁定本機。對外存取 (Tailscale 帳號/裝置名單、密碼) 見 access.py 與 auth.py。
+預設只綁定本機。由 launchd 以 socket 啟動時 (見 README) 改用 launchd 交來的 socket, 閒置自動結束 (ondemand.py)。對外存取 (Tailscale 帳號/裝置名單、密碼) 見 access.py 與 auth.py。
 """
 import argparse
 import json
 import threading
-import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from investor import paths
-from investor.web import api, auth, autorefresh, jobs, steps, store
+from investor.web import api, auth, autorefresh, jobs, ondemand, steps, store
 from investor.web.access import AccessPolicy
 from investor.web.render import build_page
 
@@ -70,6 +69,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── 路由 ──
     def do_GET(self):
+        ondemand.touch()
         if not self.policy.allows(self.headers):
             return self._send(403, "forbidden", "text/plain")
         path = urlparse(self.path).path
@@ -91,6 +91,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, "not found", "text/plain")
 
     def do_POST(self):
+        ondemand.touch()
         if not self.policy.allows(self.headers):
             return self._send(403, "forbidden", "text/plain")
         u = urlparse(self.path)
@@ -113,21 +114,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(*fn(json.loads(self.rfile.read(n) or b"{}")))
         except ValueError as e:                  # 含 json.JSONDecodeError
             self._json(400, {"error": str(e)})
-
-
-SCHEDULE_CHECK = 600   # 秒; 排程更新多久檢查一次 (到點才做, 沒到點或都是最新就不上網)
-
-
-def _scheduler():
-    """背景排程: 每週六早上把三個股票池的評級與全市場動能榜算到最新 (autorefresh.scheduled_start)。"""
-    while True:
-        try:
-            started = autorefresh.scheduled_start()
-            if started:
-                print(f"排程更新: {started[0]} ({started[1]})", flush=True)
-        except Exception as e:                       # 排程失敗不能讓伺服器掛掉, 下次檢查再試
-            print(f"排程更新檢查失敗: {e}", flush=True)
-        time.sleep(SCHEDULE_CHECK)
 
 
 def main(argv=None):
@@ -154,17 +140,26 @@ def main(argv=None):
     Handler.policy = AccessPolicy(extra_hosts, ts_users, ts_devices)
     Handler.password = password
 
+    autorefresh.PERSIST = True                   # 退避時間存檔: 閒置結束再啟動後, 不會馬上重打剛被限流的來源
+    autorefresh.load_tries()
     store.load()
     if not store.state:
         print("尚無資料, 以快取建立初始資料 (約 1 分鐘)…")
         jobs.start_job("init")
     else:
         autorefresh.maybe_start()
-    threading.Thread(target=_scheduler, daemon=True).start()
 
-    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    sock = ondemand.activated_socket()
+    if sock:                                     # launchd 隨需啟動: 用它交來的 socket, 閒置就結束
+        srv = ThreadingHTTPServer(sock.getsockname()[:2], Handler, bind_and_activate=False)
+        srv.socket.close()
+        srv.socket = sock
+        args.no_open = True
+    else:
+        srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    threading.Thread(target=ondemand.watchdog, args=(srv,), kwargs={"exit_when_idle": bool(sock)}, daemon=True).start()
     url = f"http://127.0.0.1:{args.port}/"
-    print(f"儀表板已啟動: {url}   (Ctrl+C 結束)")
+    print(f"儀表板已啟動: {url}   ({'launchd 隨需啟動, 閒置自動結束' if sock else 'Ctrl+C 結束'})", flush=True)
     if password or ts_users:
         print(f"  遠端存取: 密碼登入={'是' if password else '否'}; 限定 Tailscale 帳號={len(ts_users)} 個; "
               f"限定裝置={sorted(ts_devices) or '不限'}; 額外允許的主機名稱={sorted(extra_hosts) or '無'}")

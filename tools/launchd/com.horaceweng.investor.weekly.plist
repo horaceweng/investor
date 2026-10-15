@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 週六排程叫醒: 每週六 07:00 (電腦睡眠則醒來後) 與登入時敲一下儀表板, 讓它醒來把到點的評級與動能榜更新做完。
+     只發一個本機請求; 真正的「該不該更新」由程式判斷 (autorefresh.scheduled_start), 沒事就照常閒置結束。 -->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.horaceweng.investor.weekly</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/curl</string><string>-s</string><string>-o</string><string>/dev/null</string>
+        <string>--max-time</string><string>60</string>
+        <string>http://127.0.0.1:8765/api/status</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>7</integer><key>Minute</key><integer>1</integer></dict>
+    <key>RunAtLoad</key><true/>
+</dict>
+</plist>

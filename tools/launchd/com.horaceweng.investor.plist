@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 隨需啟動: launchd 代為監聽 127.0.0.1:8765, 有連線才啟動 main.py; 程式閒置 15 分鐘自動結束。
+     安裝: cp 到 ~/Library/LaunchAgents/ 後 launchctl bootstrap (見 README)。 -->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.horaceweng.investor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/horacemac/IT/investor/.venv/bin/python</string>
+        <string>/Users/horacemac/IT/investor/main.py</string>
+        <string>--no-open</string>
+    </array>
+    <key>WorkingDirectory</key><string>/Users/horacemac/IT/investor</string>
+    <key>EnvironmentVariables</key>
+    <dict><key>PYTHONUNBUFFERED</key><string>1</string></dict>
+    <key>Sockets</key>
+    <dict>
+        <key>Listeners</key>
+        <dict>
+            <key>SockNodeName</key><string>127.0.0.1</string>
+            <key>SockServiceName</key><string>8765</string>
+            <key>SockType</key><string>stream</string>
+            <key>SockFamily</key><string>IPv4</string>
+        </dict>
+    </dict>
+    <key>StandardOutPath</key><string>/Users/horacemac/IT/investor/data/server.log</string>
+    <key>StandardErrorPath</key><string>/Users/horacemac/IT/investor/data/server.log</string>
+</dict>
+</plist>
